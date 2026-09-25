@@ -13,47 +13,56 @@ import {
   Loader2,
   Code,
   MessageSquare,
-  ArrowRight,
-  Terminal,
   Cpu,
-  Layers
+  Layers,
+  Terminal,
+  ArrowRight,
+  Zap,
+  Globe
 } from 'lucide-react';
 import axios from 'axios';
 
-// API base URL configured for local backend
 const API_BASE = 'http://localhost:5000/api';
 
+// Popular Repositories for quick 1-click testing
+const POPULAR_REPOS = [
+  { name: 'expressjs/express', owner: 'expressjs', repo: 'express', label: 'Express.js' },
+  { name: 'facebook/react', owner: 'facebook', repo: 'react', label: 'React' },
+  { name: 'vercel/next.js', owner: 'vercel', repo: 'next.js', label: 'Next.js' },
+  { name: 'tailwindlabs/tailwindcss', owner: 'tailwindlabs', repo: 'tailwindcss', label: 'Tailwind CSS' },
+];
+
 /**
- * Simple Markdown formatter component for Sarvam AI explanations
+ * Enhanced Markdown Component for Sarvam AI explanations
  */
 function FormattedMarkdown({ content }) {
   if (!content) return null;
 
   const lines = content.split('\n');
   return (
-    <div className="space-y-3 text-slate-200 text-sm leading-relaxed">
+    <div className="space-y-3 text-slate-300 text-sm leading-relaxed font-sans">
       {lines.map((line, idx) => {
         const trimmed = line.trim();
         if (!trimmed) return <div key={idx} className="h-1" />;
 
         if (trimmed.startsWith('### ')) {
           return (
-            <h3 key={idx} className="text-lg font-bold text-indigo-300 pt-3 border-b border-slate-700/50 pb-1 flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
+            <h3 key={idx} className="text-base font-bold text-violet-300 pt-3 border-b border-slate-800 pb-1.5 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
               {trimmed.replace('### ', '')}
             </h3>
           );
         }
         if (trimmed.startsWith('#### ')) {
           return (
-            <h4 key={idx} className="text-base font-semibold text-slate-200 pt-2">
+            <h4 key={idx} className="text-sm font-semibold text-slate-200 pt-2">
               {trimmed.replace('#### ', '')}
             </h4>
           );
         }
         if (trimmed.startsWith('> ')) {
           return (
-            <blockquote key={idx} className="border-l-4 border-indigo-500 bg-slate-900/70 p-3 rounded-r-lg text-slate-300 text-xs italic my-2">
+            <blockquote key={idx} className="border-l-2 border-cyan-500 bg-slate-900/80 p-3 rounded-r-lg text-slate-300 text-xs italic my-2 font-mono">
               {trimmed.replace('> ', '')}
             </blockquote>
           );
@@ -62,7 +71,7 @@ function FormattedMarkdown({ content }) {
           const text = trimmed.substring(2);
           return (
             <div key={idx} className="flex items-start gap-2 ml-2">
-              <span className="text-indigo-400 font-bold">•</span>
+              <span className="text-cyan-400 font-bold">•</span>
               <span>{renderInlineFormatting(text)}</span>
             </div>
           );
@@ -74,7 +83,6 @@ function FormattedMarkdown({ content }) {
 }
 
 function renderInlineFormatting(text) {
-  // Simple regex parser for bold **text** and `code`
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
@@ -82,7 +90,7 @@ function renderInlineFormatting(text) {
     }
     if (part.startsWith('`') && part.endsWith('`')) {
       return (
-        <code key={i} className="bg-slate-900 text-amber-300 font-mono text-xs px-1.5 py-0.5 rounded border border-slate-700">
+        <code key={i} className="bg-slate-900 text-cyan-300 font-mono text-xs px-1.5 py-0.5 rounded border border-slate-800">
           {part.slice(1, -1)}
         </code>
       );
@@ -92,7 +100,7 @@ function renderInlineFormatting(text) {
 }
 
 export default function App() {
-  // Backend Connection State
+  // Backend Health
   const [backendHealth, setBackendHealth] = useState(null);
   const [backendLoading, setBackendLoading] = useState(true);
 
@@ -110,7 +118,7 @@ export default function App() {
   const [queryResult, setQueryResult] = useState(null);
   const [queryError, setQueryError] = useState(null);
 
-  // Check Backend Health on Mount
+  // Check Backend Health
   useEffect(() => {
     axios
       .get(`${API_BASE}/health`)
@@ -119,16 +127,19 @@ export default function App() {
         setBackendLoading(false);
       })
       .catch((err) => {
-        console.error('Backend health check error:', err);
-        setBackendHealth({ status: 'error', message: 'Backend unreachable' });
+        console.error('Backend health check failed:', err);
+        setBackendHealth({ status: 'error', message: 'Backend offline' });
         setBackendLoading(false);
       });
   }, []);
 
-  // Handle Repository Ingestion
-  const handleIngest = async (e) => {
+  // Handle Ingestion
+  const handleIngest = async (e, customOwner, customRepo) => {
     e?.preventDefault();
-    if (!owner.trim() || !repo.trim()) return;
+    const targetOwner = customOwner || owner;
+    const targetRepo = customRepo || repo;
+
+    if (!targetOwner.trim() || !targetRepo.trim()) return;
 
     setIngestLoading(true);
     setIngestError(null);
@@ -136,20 +147,43 @@ export default function App() {
 
     try {
       const res = await axios.post(`${API_BASE}/ingest`, {
-        owner: owner.trim(),
-        repo: repo.trim(),
+        owner: targetOwner.trim(),
+        repo: targetRepo.trim(),
       });
       setIngestResult(res.data);
     } catch (err) {
       console.error('Ingestion error:', err);
-      const errMsg = err.response?.data?.message || err.message || 'Ingestion failed.';
+      const errMsg = err.response?.data?.message || err.message || 'Repository ingestion failed.';
       setIngestError(errMsg);
     } finally {
       setIngestLoading(false);
     }
   };
 
-  // Handle Decision Graph Query
+  // Quick Select Repository Handler
+  const handleQuickSelectRepo = (targetOwner, targetRepo) => {
+    setOwner(targetOwner);
+    setRepo(targetRepo);
+
+    // Auto update suggested question for selected repo
+    if (targetRepo === 'react') {
+      setQuestion('Why was reconciler fiber architecture updated?');
+      setKeyword('reconciler');
+    } else if (targetRepo === 'next.js') {
+      setQuestion('Why was App Router layout boundary handling changed?');
+      setKeyword('layout');
+    } else if (targetRepo === 'tailwindcss') {
+      setQuestion('Why was JIT engine compilation pattern modified?');
+      setKeyword('jit');
+    } else {
+      setQuestion('Why was error handling modified in router.js?');
+      setKeyword('router.js');
+    }
+
+    handleIngest(null, targetOwner, targetRepo);
+  };
+
+  // Handle Query
   const handleQuery = async (e, customQ, customK) => {
     e?.preventDefault();
     const targetQ = customQ !== undefined ? customQ : question;
@@ -169,97 +203,117 @@ export default function App() {
       setQueryResult(res.data);
     } catch (err) {
       console.error('Query error:', err);
-      const errMsg = err.response?.data?.message || err.message || 'Query execution failed.';
+      const errMsg = err.response?.data?.message || err.message || 'GraphRAG query execution failed.';
       setQueryError(errMsg);
     } finally {
       setQueryLoading(false);
     }
   };
 
-  // Clickable Suggestion Chips Handler
-  const handleSuggestionClick = (suggestedQ, suggestedK) => {
-    setQuestion(suggestedQ);
-    setKeyword(suggestedK);
-    handleQuery(null, suggestedQ, suggestedK);
-  };
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white pb-16">
-      {/* HEADER BAR */}
-      <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4">
+    <div className="min-h-screen bg-[#090d16] bg-grid-pattern text-slate-100 font-sans selection:bg-violet-600 selection:text-white pb-20">
+      
+      {/* DEVELOPER STUDIO HEADER BAR */}
+      <header className="border-b border-slate-800/80 bg-[#090d16]/90 backdrop-blur-md sticky top-0 z-50 px-6 py-3.5">
         <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-indigo-600/20 border border-indigo-500/30 rounded-xl text-indigo-400">
-              <Code className="w-6 h-6" />
+            <div className="p-2 bg-gradient-to-br from-violet-600/30 to-cyan-500/30 border border-violet-500/40 rounded-xl text-cyan-400 glow-accent">
+              <Terminal className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
                 Why The Code Is Like This
+                <span className="text-[10px] bg-violet-950 text-violet-300 border border-violet-700/50 px-2 py-0.5 rounded-full font-mono">
+                  v1.0 Studio
+                </span>
               </h1>
-              <p className="text-xs text-slate-400">
-                Developer Intent Analysis & GraphRAG Decision Forensics
+              <p className="text-xs text-slate-400 flex items-center gap-2">
+                GraphRAG Developer Intent & Decision Forensics
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300">
-              <Database className="w-3.5 h-3.5 text-amber-400" />
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1 rounded-lg text-xs font-mono text-slate-300">
+              <Database className="w-3.5 h-3.5 text-cyan-400" />
               <span>Neo4j AuraDB</span>
             </div>
-            <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300">
-              <Cpu className="w-3.5 h-3.5 text-purple-400" />
+            <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-3 py-1 rounded-lg text-xs font-mono text-slate-300">
+              <Cpu className="w-3.5 h-3.5 text-violet-400" />
               <span>Sarvam AI</span>
             </div>
 
             {/* Backend Health Badge */}
             <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold ${
+              className={`flex items-center gap-2 px-3 py-1 rounded-lg border text-xs font-semibold ${
                 backendHealth?.status === 'ok'
-                  ? 'bg-emerald-950/60 border-emerald-500/30 text-emerald-400'
-                  : 'bg-amber-950/60 border-amber-500/30 text-amber-400'
+                  ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-400'
+                  : 'bg-rose-950/40 border-rose-500/30 text-rose-400'
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${backendHealth?.status === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-              {backendLoading ? 'Connecting...' : backendHealth?.status === 'ok' ? 'Backend Live' : 'Backend Offline'}
+              <span className={`w-2 h-2 rounded-full ${backendHealth?.status === 'ok' ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+              {backendLoading ? 'Checking...' : backendHealth?.status === 'ok' ? 'Server Live' : 'Server Offline'}
             </div>
           </div>
         </div>
       </header>
 
-      {/* MAIN CONTENT CONTAINER */}
+      {/* MAIN STUDIO CONTAINER */}
       <main className="max-w-7xl mx-auto px-6 pt-8 space-y-8">
 
-        {/* SECTION 1: REPOSITORY INGESTION CONTROLS */}
-        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <GitBranch className="w-5 h-5 text-indigo-400" />
-              1. Repository Ingestion & Decision Graph Builder
-            </h2>
-            <span className="text-xs text-slate-400 font-mono">POST /api/ingest</span>
+        {/* SECTION 1: FAST REPOSITORY INGESTION PANEL */}
+        <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-cyan-400" />
+              <h2 className="text-base font-bold text-slate-100">
+                1. Multi-Repo Fast Ingestion & Decision Graph Construction
+              </h2>
+            </div>
+            <span className="text-xs text-slate-400 font-mono">Fast Parallel Fetch (&lt; 10s)</span>
           </div>
 
-          <form onSubmit={handleIngest} className="flex flex-wrap items-center gap-4">
+          {/* Quick-Select Popular Repository Chips */}
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="text-slate-400 font-mono flex items-center gap-1">
+              <Globe className="w-3.5 h-3.5 text-violet-400" /> Quick-Select Repo:
+            </span>
+            {POPULAR_REPOS.map((item) => (
+              <button
+                key={item.name}
+                type="button"
+                onClick={() => handleQuickSelectRepo(item.owner, item.repo)}
+                className={`px-3 py-1 rounded-lg font-mono transition text-xs border cursor-pointer ${
+                  owner === item.owner && repo === item.repo
+                    ? 'bg-violet-600/30 border-violet-500 text-violet-200 font-semibold shadow-sm'
+                    : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleIngest} className="flex flex-wrap items-center gap-4 pt-1">
             <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-semibold text-slate-400 mb-1">GitHub Owner / Org</label>
+              <label className="block text-xs font-semibold text-slate-400 mb-1 font-mono">GitHub Owner / Org</label>
               <input
                 type="text"
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
                 placeholder="e.g. expressjs"
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500 transition"
               />
             </div>
 
             <div className="flex-1 min-w-[200px]">
-              <label className="block text-xs font-semibold text-slate-400 mb-1">Repository Name</label>
+              <label className="block text-xs font-semibold text-slate-400 mb-1 font-mono">Repository Name</label>
               <input
                 type="text"
                 value={repo}
                 onChange={(e) => setRepo(e.target.value)}
                 placeholder="e.g. express"
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-cyan-500 transition"
               />
             </div>
 
@@ -267,17 +321,17 @@ export default function App() {
               <button
                 type="submit"
                 disabled={ingestLoading || !owner.trim() || !repo.trim()}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-sm px-5 py-2.5 rounded-lg flex items-center gap-2 transition shadow-md shadow-indigo-600/20 cursor-pointer"
+                className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold text-sm px-5 py-2 rounded-lg flex items-center gap-2 transition shadow-lg shadow-violet-600/20 cursor-pointer"
               >
                 {ingestLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Ingesting Commits & PRs...
+                    <Loader2 className="w-4 h-4 animate-spin text-cyan-300" />
+                    Ingesting Repo...
                   </>
                 ) : (
                   <>
-                    <Database className="w-4 h-4" />
-                    Ingest & Graph Repository
+                    <Database className="w-4 h-4 text-cyan-300" />
+                    Ingest & Graph Repo
                   </>
                 )}
               </button>
@@ -286,32 +340,32 @@ export default function App() {
 
           {/* Ingestion Error Alert */}
           {ingestError && (
-            <div className="bg-rose-950/50 border border-rose-800/60 rounded-xl p-4 text-rose-300 text-sm flex items-start gap-3">
+            <div className="bg-rose-950/40 border border-rose-800/60 rounded-xl p-4 text-rose-300 text-sm flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <strong className="font-semibold block">Ingestion Failed</strong>
+                <strong className="font-semibold block font-mono">Ingestion Failed</strong>
                 {ingestError}
               </div>
             </div>
           )}
 
-          {/* Ingestion Success Confirmation */}
+          {/* Ingestion Success Banner */}
           {ingestResult && (
-            <div className="bg-emerald-950/40 border border-emerald-800/60 rounded-xl p-4 text-emerald-300 text-sm flex items-start gap-3">
+            <div className="bg-emerald-950/30 border border-emerald-800/50 rounded-xl p-4 text-emerald-300 text-sm flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <div className="font-semibold text-emerald-200">
-                  Successfully Ingested & Graph Built for <span className="font-mono text-emerald-400">{ingestResult.data?.owner}/{ingestResult.data?.repo}</span>
+                  Ingested & Constructed Decision Graph for <span className="font-mono text-cyan-300">{ingestResult.data?.owner}/{ingestResult.data?.repo}</span>
                 </div>
-                <div className="flex flex-wrap gap-4 text-xs text-slate-300 pt-1">
-                  <span className="bg-emerald-900/40 border border-emerald-700/50 px-2.5 py-1 rounded">
-                    Commits Extracted: <strong>{ingestResult.data?.commits?.length || 0}</strong>
+                <div className="flex flex-wrap gap-4 text-xs font-mono text-slate-300 pt-1">
+                  <span className="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded">
+                    Commits: <strong className="text-cyan-400">{ingestResult.data?.commits?.length || 0}</strong>
                   </span>
-                  <span className="bg-emerald-900/40 border border-emerald-700/50 px-2.5 py-1 rounded">
-                    Pull Requests Extracted: <strong>{ingestResult.data?.pullRequests?.length || 0}</strong>
+                  <span className="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded">
+                    Closed PRs: <strong className="text-cyan-400">{ingestResult.data?.pullRequests?.length || 0}</strong>
                   </span>
-                  <span className="bg-emerald-900/40 border border-emerald-700/50 px-2.5 py-1 rounded">
-                    Neo4j Graph Status: <strong className="text-emerald-400">{ingestResult.graphStatus}</strong>
+                  <span className="bg-slate-950 border border-slate-800 px-2.5 py-1 rounded">
+                    Neo4j Graph: <strong className="text-emerald-400">{ingestResult.graphStatus}</strong>
                   </span>
                 </div>
               </div>
@@ -320,20 +374,22 @@ export default function App() {
         </section>
 
 
-        {/* SECTION 2: DEVELOPER "WHY" QUERY */}
-        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-              <Search className="w-5 h-5 text-indigo-400" />
-              2. Ask "Why The Code Is Like This" (GraphRAG Intent Query)
-            </h2>
+        {/* SECTION 2: GRAPH RAG DECISION QUERY PANEL */}
+        <section className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <Search className="w-5 h-5 text-violet-400" />
+              <h2 className="text-base font-bold text-slate-100">
+                2. Developer "Why" Query & GraphRAG Intent Search
+              </h2>
+            </div>
             <span className="text-xs text-slate-400 font-mono">POST /api/query</span>
           </div>
 
           <form onSubmit={handleQuery} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                <label className="block text-xs font-semibold text-slate-400 mb-1 font-mono">
                   Developer Question
                 </label>
                 <input
@@ -341,12 +397,12 @@ export default function App() {
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   placeholder="e.g. Why was error handling modified in router.js?"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500 transition"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                <label className="block text-xs font-semibold text-slate-400 mb-1 font-mono">
                   Target Keyword / File
                 </label>
                 <input
@@ -354,51 +410,25 @@ export default function App() {
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   placeholder="e.g. router.js"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500 transition"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-100 font-mono focus:outline-none focus:border-violet-500 transition"
                 />
               </div>
             </div>
 
-            {/* Clickable Suggestion Chips */}
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="text-slate-400 font-medium">Suggestions:</span>
-              <button
-                type="button"
-                onClick={() => handleSuggestionClick('Why was error handling modified in router.js?', 'router.js')}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1 rounded-full transition cursor-pointer"
-              >
-                Why was router error handling changed?
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSuggestionClick('Why was request timeout updated in config?', 'config')}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1 rounded-full transition cursor-pointer"
-              >
-                Why was timeout updated in config?
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSuggestionClick('What PR introduced async middleware wrapper?', 'middleware')}
-                className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-1 rounded-full transition cursor-pointer"
-              >
-                Async middleware PR rationale
-              </button>
-            </div>
-
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end pt-1">
               <button
                 type="submit"
                 disabled={queryLoading || !question.trim()}
-                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition shadow-md shadow-indigo-600/20 cursor-pointer"
+                className="bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white font-semibold text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition shadow-lg shadow-cyan-600/20 cursor-pointer"
               >
                 {queryLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
                     Querying Decision Graph & Sarvam AI...
                   </>
                 ) : (
                   <>
-                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <Sparkles className="w-4 h-4 text-cyan-200" />
                     Search Decision Graph
                   </>
                 )}
@@ -408,10 +438,10 @@ export default function App() {
 
           {/* Query Error Alert */}
           {queryError && (
-            <div className="bg-rose-950/50 border border-rose-800/60 rounded-xl p-4 text-rose-300 text-sm flex items-start gap-3">
+            <div className="bg-rose-950/40 border border-rose-800/60 rounded-xl p-4 text-rose-300 text-sm flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <strong className="font-semibold block">Query Error</strong>
+                <strong className="font-semibold block font-mono">Query Execution Error</strong>
                 {queryError}
               </div>
             </div>
@@ -419,61 +449,61 @@ export default function App() {
         </section>
 
 
-        {/* SECTION 3: RESPONSE & EVIDENCE VIEW (2-COLUMN GRID) */}
+        {/* SECTION 3: 2-COLUMN RESPONSE & EVIDENCE WORKSPACE */}
         {queryResult && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
             {/* LEFT COLUMN: SARVAM AI EXPLANATION (7 COLS) */}
-            <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-amber-400" />
+                  <Sparkles className="w-5 h-5 text-cyan-400" />
                   <h3 className="text-base font-bold text-slate-100">
-                    Sarvam AI Synthesized Explanation
+                    Sarvam AI Synthesized Rationale
                   </h3>
                 </div>
-                <span className="text-xs bg-indigo-950 text-indigo-300 border border-indigo-700/50 px-2.5 py-0.5 rounded-full font-mono">
+                <span className="text-xs bg-violet-950 text-violet-300 border border-violet-700/50 px-2.5 py-0.5 rounded-full font-mono">
                   sarvam-2b model
                 </span>
               </div>
 
               {/* Formatted Markdown Output */}
-              <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-5">
+              <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-5 shadow-inner">
                 <FormattedMarkdown content={queryResult.answer} />
               </div>
             </div>
 
             {/* RIGHT COLUMN: EVIDENCE CHAIN SIDE PANEL (5 COLS) */}
-            <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
                 <div className="flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-sky-400" />
+                  <Layers className="w-5 h-5 text-violet-400" />
                   <h3 className="text-base font-bold text-slate-100">
-                    Neo4j Graph Evidence Chain
+                    Neo4j Decision Graph Evidence
                   </h3>
                 </div>
                 <span className="text-xs bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-0.5 rounded-full font-mono">
-                  {queryResult.evidence?.length || 0} nodes linked
+                  {queryResult.evidence?.length || 0} pathways
                 </span>
               </div>
 
               {/* Empty Evidence State */}
               {(!queryResult.evidence || queryResult.evidence.length === 0) ? (
-                <div className="text-center py-10 text-slate-400 text-sm">
-                  No matching graph evidence found for this query in the current repository.
+                <div className="text-center py-12 text-slate-400 text-sm font-mono">
+                  No matching decision graph evidence found for keyword "{keyword}".
                 </div>
               ) : (
                 <div className="space-y-4 max-h-[700px] overflow-y-auto pr-1">
                   {queryResult.evidence.map((item, idx) => (
                     <div
                       key={idx}
-                      className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3 hover:border-slate-700 transition"
+                      className="bg-slate-950/90 border border-slate-800/80 rounded-xl p-4 space-y-3 hover:border-violet-500/50 transition shadow-sm"
                     >
                       {/* Code Entity Badge */}
                       {item.codeEntity && (
-                        <div className="flex items-center gap-2">
-                          <span className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-md text-xs font-mono font-medium flex items-center gap-1.5">
-                            <FileCode className="w-3.5 h-3.5" />
+                        <div className="flex items-center justify-between">
+                          <span className="bg-violet-500/10 text-violet-300 border border-violet-500/20 px-2.5 py-1 rounded-md text-xs font-mono font-medium flex items-center gap-1.5">
+                            <FileCode className="w-3.5 h-3.5 text-violet-400" />
                             {item.codeEntity}
                           </span>
                         </div>
@@ -481,9 +511,9 @@ export default function App() {
 
                       {/* Commit Card */}
                       {item.commit && (
-                        <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1 text-xs">
-                          <div className="flex items-center justify-between text-slate-400">
-                            <span className="font-mono text-sky-400 font-medium flex items-center gap-1">
+                        <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between text-slate-400 font-mono">
+                            <span className="text-cyan-400 font-semibold flex items-center gap-1">
                               <GitBranch className="w-3 h-3" />
                               {item.commit.sha ? item.commit.sha.substring(0, 7) : 'Commit'}
                             </span>
@@ -492,11 +522,11 @@ export default function App() {
                               {item.commit.author || 'Unknown'}
                             </span>
                           </div>
-                          <p className="text-slate-200 font-medium line-clamp-2 pt-0.5">
+                          <p className="text-slate-200 font-medium line-clamp-2">
                             {item.commit.message}
                           </p>
                           {item.commit.date && (
-                            <div className="text-[11px] text-slate-400 pt-1 flex items-center gap-1">
+                            <div className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
                               <Calendar className="w-3 h-3 text-slate-400" />
                               {new Date(item.commit.date).toLocaleDateString()}
                             </div>
@@ -506,35 +536,35 @@ export default function App() {
 
                       {/* Pull Request Card */}
                       {item.pullRequest && (
-                        <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1 text-xs">
-                          <div className="flex items-center justify-between text-slate-400">
-                            <span className="font-semibold text-indigo-300">
+                        <div className="bg-slate-900/80 border border-slate-800 rounded-lg p-3 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-violet-300">
                               PR #{item.pullRequest.number}: {item.pullRequest.title}
                             </span>
                           </div>
                           {item.pullRequest.body && (
-                            <p className="text-slate-400 line-clamp-3 text-[11px] italic">
+                            <p className="text-slate-400 line-clamp-3 text-[11px] italic font-mono">
                               "{item.pullRequest.body}"
                             </p>
                           )}
                         </div>
                       )}
 
-                      {/* Discussions Card */}
+                      {/* Review Discussions */}
                       {item.discussions && item.discussions.length > 0 && (
                         <div className="space-y-1.5 pt-1">
-                          <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
-                            <MessageSquare className="w-3 h-3 text-amber-400" />
+                          <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1 font-mono">
+                            <MessageSquare className="w-3 h-3 text-cyan-400" />
                             Review Discussions ({item.discussions.length})
                           </div>
                           {item.discussions.map((disc, dIdx) => (
                             <div
                               key={dIdx}
-                              className="bg-amber-950/20 border border-amber-900/30 rounded p-2 text-[11px] text-slate-300 space-y-0.5"
+                              className="bg-cyan-950/20 border border-cyan-900/30 rounded p-2 text-[11px] text-slate-300 space-y-0.5"
                             >
-                              <div className="font-medium text-amber-300 flex items-center justify-between">
+                              <div className="font-medium text-cyan-300 flex items-center justify-between font-mono">
                                 <span>@{disc.user}</span>
-                                <span className="text-[10px] text-amber-500/80">{disc.type}</span>
+                                <span className="text-[10px] text-cyan-500/80">{disc.type}</span>
                               </div>
                               <p className="text-slate-300">{disc.body}</p>
                             </div>

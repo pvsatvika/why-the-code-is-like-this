@@ -9,85 +9,86 @@ const password = process.env.NEO4J_PASSWORD || 'your_neo4j_password';
 
 let driver;
 
-/**
- * Returns a singleton Neo4j driver instance.
- */
 function getDriver() {
   if (!driver) {
-    driver = neo4j.driver(
-      uri,
-      neo4j.auth.basic(user, password)
-    );
+    driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
   }
   return driver;
 }
 
-/**
- * Verifies connection to the Neo4j database.
- * @returns {Promise<boolean>} True if connected, false otherwise.
- */
 export async function verifyConnection() {
   try {
     const d = getDriver();
     const serverInfo = await d.getServerInfo();
-    console.log(`[Neo4j Graph] Connected successfully to server: ${serverInfo.address}`);
+    console.log(`[Neo4j Graph] Connected to server: ${serverInfo.address}`);
     return true;
   } catch (err) {
-    console.warn(`[Neo4j Graph] Connection verification failed: ${err.message}`);
+    console.warn(`[Neo4j Graph] Connection warning: ${err.message}`);
     return false;
   }
 }
 
 /**
- * Wipes all nodes and relationships from the graph database.
+ * Wipes graph data for a specific repository or clears the database.
+ * @param {string} [owner]
+ * @param {string} [repo]
  */
-export async function clearDatabase() {
+export async function clearDatabase(owner, repo) {
   const d = getDriver();
   const session = d.session();
   try {
-    console.log('[Neo4j Graph] Clearing database (DETACH DELETE all nodes)...');
-    await session.executeWrite((tx) => tx.run('MATCH (n) DETACH DELETE n'));
-    console.log('[Neo4j Graph] Database wiped clean.');
+    if (owner && repo) {
+      console.log(`[Neo4j Graph] Clearing existing graph nodes for repo: ${owner}/${repo}...`);
+      await session.executeWrite((tx) =>
+        tx.run(
+          `
+          MATCH (r:Repository { name: $repo, owner: $owner })
+          OPTIONAL MATCH (r)-[:CONTAINS]->(e:CodeEntity)
+          OPTIONAL MATCH (e)-[:MODIFIED_IN]->(c:Commit)
+          OPTIONAL MATCH (c)-[:BELONGS_TO]->(pr:PullRequest)
+          OPTIONAL MATCH (pr)-[:DISCUSSES]->(d:Discussion)
+          DETACH DELETE r, e, c, pr, d
+          `,
+          { owner, repo }
+        )
+      );
+    } else {
+      console.log('[Neo4j Graph] Wiping all nodes and relationships...');
+      await session.executeWrite((tx) => tx.run('MATCH (n) DETACH DELETE n'));
+    }
   } catch (err) {
-    console.error('[Neo4j Graph] Failed to clear database:', err.message);
-    throw err;
+    console.warn(`[Neo4j Graph] Clear database warning:`, err.message);
   } finally {
     await session.close();
   }
 }
 
 /**
- * Constructs a decision graph in Neo4j from ingested repository data.
- * Creates :Repository, :CodeEntity, :Commit, :PullRequest, and :Discussion nodes and their relationships.
+ * Constructs a decision graph for a specific repository in Neo4j.
  * 
  * @param {Object} repoData - Object containing { owner, repo, commits, pullRequests }
  */
 export async function buildDecisionGraph(repoData) {
   const { owner, repo, commits = [], pullRequests = [] } = repoData;
-  console.log(`[Neo4j Graph] Building decision graph for ${owner}/${repo}...`);
+  console.log(`[Neo4j Graph] Building multi-repo decision graph for ${owner}/${repo}...`);
 
-  await clearDatabase();
+  await clearDatabase(owner, repo);
 
   const d = getDriver();
   const session = d.session();
 
   try {
-    // 1. Create Repository Node
-    console.log(`[Neo4j Graph] Creating Repository node: ${owner}/${repo}`);
+    // 1. Repository Node
     await session.executeWrite((tx) =>
-      tx.run(
-        `MERGE (r:Repository { name: $repo, owner: $owner })`,
-        { repo, owner }
-      )
+      tx.run(`MERGE (r:Repository { name: $repo, owner: $owner })`, { repo, owner })
     );
 
-    // 2. Process Commits & CodeEntities
-    console.log(`[Neo4j Graph] Processing ${commits.length} commits and code entities...`);
+    // 2. Process Commits & Code Entities
     for (const commit of commits) {
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MERGE (c:Commit { sha: $sha })
+          MERGE (c:Commit { sha: $sha, owner: $owner, repo: $repo })
           SET c.message = $message,
               c.author = $author,
               c.date = $date,
@@ -95,6 +96,8 @@ export async function buildDecisionGraph(repoData) {
           `,
           {
             sha: commit.sha,
+            owner,
+            repo,
             message: commit.message || '',
             author: commit.author?.name || 'Unknown',
             date: commit.author?.date || '',
@@ -103,14 +106,13 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Create CodeEntity nodes and connect to Repository & Commit
       for (const file of commit.files || []) {
         await session.executeWrite((tx) =>
           tx.run(
             `
             MATCH (r:Repository { name: $repo, owner: $owner })
-            MATCH (c:Commit { sha: $sha })
-            MERGE (e:CodeEntity { filename: $filename })
+            MATCH (c:Commit { sha: $sha, owner: $owner, repo: $repo })
+            MERGE (e:CodeEntity { filename: $filename, owner: $owner, repo: $repo })
             MERGE (r)-[:CONTAINS]->(e)
             MERGE (e)-[:MODIFIED_IN]->(c)
             `,
@@ -125,13 +127,12 @@ export async function buildDecisionGraph(repoData) {
       }
     }
 
-    // 3. Process PullRequests & Discussions
-    console.log(`[Neo4j Graph] Processing ${pullRequests.length} pull requests and discussions...`);
+    // 3. Process Pull Requests & Discussions
     for (const pr of pullRequests) {
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MERGE (pr:PullRequest { number: $number })
+          MERGE (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
           SET pr.title = $title,
               pr.body = $body,
               pr.user = $user,
@@ -140,6 +141,8 @@ export async function buildDecisionGraph(repoData) {
           `,
           {
             number: neo4j.int(pr.number),
+            owner,
+            repo,
             title: pr.title || '',
             body: pr.body || '',
             user: pr.user || 'Unknown',
@@ -149,26 +152,26 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Link commits to PR if commit message references PR number (e.g. #123) or PR body references commit sha
+      // Link Commits to PR if PR references commit or commit references PR number
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MATCH (pr:PullRequest { number: $number })
-          MATCH (c:Commit)
+          MATCH (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
+          MATCH (c:Commit { owner: $owner, repo: $repo })
           WHERE c.message CONTAINS ('#' + toString($number))
              OR toLower(pr.body) CONTAINS toLower(c.sha)
           MERGE (c)-[:BELONGS_TO]->(pr)
           `,
-          { number: neo4j.int(pr.number) }
+          { number: neo4j.int(pr.number), owner, repo }
         )
       );
 
-      // Create Discussion nodes for PR comments
+      // Create Discussions
       for (const comment of pr.comments || []) {
         await session.executeWrite((tx) =>
           tx.run(
             `
-            MATCH (pr:PullRequest { number: $number })
+            MATCH (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
             CREATE (d:Discussion {
               user: $user,
               body: $body,
@@ -179,6 +182,8 @@ export async function buildDecisionGraph(repoData) {
             `,
             {
               number: neo4j.int(pr.number),
+              owner,
+              repo,
               user: comment.user || 'Unknown',
               body: comment.body || '',
               type: comment.type || 'comment',
@@ -189,10 +194,10 @@ export async function buildDecisionGraph(repoData) {
       }
     }
 
-    console.log(`[Neo4j Graph] Decision graph successfully constructed for ${owner}/${repo}.`);
+    console.log(`[Neo4j Graph] Multi-repo graph updated for ${owner}/${repo}.`);
     return { success: true, owner, repo };
   } catch (err) {
-    console.error(`[Neo4j Graph] Error building decision graph:`, err.message);
+    console.error(`[Neo4j Graph] Error building graph for ${owner}/${repo}:`, err.message);
     throw err;
   } finally {
     await session.close();
@@ -200,18 +205,16 @@ export async function buildDecisionGraph(repoData) {
 }
 
 /**
- * Queries the Neo4j graph for a subgraph matching a given keyword or filename.
- * Returns connected CodeEntity, Commit, PullRequest, and Discussion nodes.
+ * Queries Neo4j for a matching subgraph context.
  * 
- * @param {string} keyword - Search query or filename
- * @returns {Promise<Array<Object>>} Structured subgraph evidence context
+ * @param {string} keyword - Search term or file name
+ * @returns {Promise<Array<Object>>} Subgraph evidence
  */
 export async function querySubgraph(keyword) {
   if (!keyword || typeof keyword !== 'string') {
     return [];
   }
 
-  console.log(`[Neo4j Graph] Querying subgraph for keyword: "${keyword}"...`);
   const d = getDriver();
   const session = d.session();
 
@@ -253,7 +256,7 @@ export async function querySubgraph(keyword) {
       tx.run(cypher, { keyword: keyword.trim() })
     );
 
-    const subgraph = result.records.map((record) => {
+    return result.records.map((record) => {
       const prNumber = record.get('prNumber');
       return {
         codeEntity: record.get('codeEntity'),
@@ -271,9 +274,6 @@ export async function querySubgraph(keyword) {
         discussions: (record.get('discussions') || []).filter((d) => d && d.user),
       };
     });
-
-    console.log(`[Neo4j Graph] Subgraph query returned ${subgraph.length} matching nodes/pathways.`);
-    return subgraph;
   } catch (err) {
     console.error(`[Neo4j Graph] Error querying subgraph:`, err.message);
     throw err;
