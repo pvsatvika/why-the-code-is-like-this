@@ -8,7 +8,7 @@ function getOctokitClient() {
   const isDummy = !token || token === 'your_github_token';
 
   if (isDummy) {
-    console.warn('[GitHub Service] Warning: GITHUB_TOKEN is missing or using default placeholder. Unauthenticated rate limits (60 req/hr) apply.');
+    console.warn('[GitHub Service] Warning: GITHUB_TOKEN is missing or using placeholder. Rate limit is 60 req/hr.');
   }
 
   return new Octokit({
@@ -17,12 +17,12 @@ function getOctokitClient() {
 }
 
 /**
- * Fetches repository history: metadata, commits, pull requests, review comments, and issues.
- * Bounded to 20 commits, 15 pull requests, and 15 issues for fast, reliable ingestion.
+ * Fetches repository history: metadata, commits (with changed files),
+ * closed PRs (with PR commits, issue comments, and code review comments), and issues.
  * 
- * @param {string} owner - Repository owner (user or organization)
+ * @param {string} owner - Repository owner
  * @param {string} repo - Repository name
- * @returns {Promise<Object>} Structured repository data
+ * @returns {Promise<Object>} Structured repo data
  */
 export async function fetchRepoData(owner, repo) {
   if (!owner || !repo) {
@@ -34,9 +34,9 @@ export async function fetchRepoData(owner, repo) {
   const octokit = getOctokitClient();
 
   try {
-    console.log(`[GitHub Service] Ingesting repository history for: ${owner}/${repo}...`);
+    console.log(`[GitHub Service] Deep-fetching history for ${owner}/${repo}...`);
 
-    // Fetch repo metadata, commits, closed PRs, and issues in parallel
+    // 1. Primary Parallel Fetch: Repo info, Commits, PRs, Issues
     const [repoRes, commitsRes, prsRes, issuesRes] = await Promise.allSettled([
       octokit.rest.repos.get({ owner, repo }),
       octokit.rest.repos.listCommits({ owner, repo, per_page: 20 }),
@@ -44,21 +44,20 @@ export async function fetchRepoData(owner, repo) {
       octokit.rest.issues.listForRepo({ owner, repo, state: 'all', per_page: 15 }),
     ]);
 
-    // Check repository existence first
     if (repoRes.status === 'rejected') {
       const err = repoRes.reason;
       if (err.status === 404) {
-        const error = new Error(`Repository '${owner}/${repo}' not found on GitHub or is private.`);
+        const error = new Error(`Repository '${owner}/${repo}' not found or is private.`);
         error.status = 404;
         throw error;
       }
       if (err.status === 401) {
-        const error = new Error('Unauthorized GITHUB_TOKEN configured.');
+        const error = new Error('Unauthorized GITHUB_TOKEN.');
         error.status = 401;
         throw error;
       }
       if (err.status === 403) {
-        const error = new Error('GitHub API rate limit exceeded or access forbidden.');
+        const error = new Error('GitHub API rate limit exceeded.');
         error.status = 403;
         throw error;
       }
@@ -73,16 +72,15 @@ export async function fetchRepoData(owner, repo) {
       url: repoRes.value.data.html_url || `https://github.com/${owner}/${repo}`,
     };
 
-    const commitList = commitsRes.status === 'fulfilled' ? commitsRes.value.data : [];
-    const prList = prsRes.status === 'fulfilled' ? prsRes.value.data : [];
+    const commitListRaw = commitsRes.status === 'fulfilled' ? commitsRes.value.data : [];
+    const prListRaw = prsRes.status === 'fulfilled' ? prsRes.value.data : [];
     const issueListRaw = issuesRes.status === 'fulfilled' ? issuesRes.value.data : [];
 
-    // Filter out PRs from issue list (GitHub API returns PRs in listForRepo issues endpoint)
     const issueList = issueListRaw.filter((issue) => !issue.pull_request);
 
-    // 1. Fetch File Diffs for Commits (in parallel)
+    // 2. Fetch File Diffs for Commits
     const commits = await Promise.all(
-      commitList.map(async (commit) => {
+      commitListRaw.map(async (commit) => {
         try {
           const { data: detail } = await octokit.rest.repos.getCommit({
             owner,
@@ -117,15 +115,17 @@ export async function fetchRepoData(owner, repo) {
       })
     );
 
-    // 2. Fetch Discussions & Comments for Pull Requests (in parallel)
+    // 3. Fetch PR Commits & Comments for Reliable PR ↔ Commit & File Linking
     const pullRequests = await Promise.all(
-      prList.map(async (pr) => {
+      prListRaw.map(async (pr) => {
         try {
-          const [issueCommentsRes, reviewCommentsRes] = await Promise.allSettled([
+          const [prCommitsRes, issueCommentsRes, reviewCommentsRes] = await Promise.allSettled([
+            octokit.rest.pulls.listCommits({ owner, repo, pull_number: pr.number, per_page: 20 }),
             octokit.rest.issues.listComments({ owner, repo, issue_number: pr.number }),
             octokit.rest.pulls.listReviewComments({ owner, repo, pull_number: pr.number }),
           ]);
 
+          const prCommits = prCommitsRes.status === 'fulfilled' ? prCommitsRes.value.data.map((c) => c.sha) : [];
           const issueComments = issueCommentsRes.status === 'fulfilled' ? issueCommentsRes.value.data : [];
           const reviewComments = reviewCommentsRes.status === 'fulfilled' ? reviewCommentsRes.value.data : [];
 
@@ -153,7 +153,9 @@ export async function fetchRepoData(owner, repo) {
             body: pr.body || '',
             author: pr.user?.login || 'Unknown',
             merged_at: pr.merged_at || null,
+            merge_commit_sha: pr.merge_commit_sha || null,
             url: pr.html_url,
+            pr_commits: prCommits,
             comments,
           };
         } catch {
@@ -163,14 +165,16 @@ export async function fetchRepoData(owner, repo) {
             body: pr.body || '',
             author: pr.user?.login || 'Unknown',
             merged_at: pr.merged_at || null,
+            merge_commit_sha: null,
             url: pr.html_url,
+            pr_commits: [],
             comments: [],
           };
         }
       })
     );
 
-    // 3. Format Issues
+    // 4. Format Issues
     const issues = issueList.map((issue) => ({
       number: issue.number,
       title: issue.title || '',
@@ -181,7 +185,7 @@ export async function fetchRepoData(owner, repo) {
       url: issue.html_url,
     }));
 
-    console.log(`[GitHub Service] Extraction complete: ${commits.length} commits, ${pullRequests.length} PRs, ${issues.length} issues.`);
+    console.log(`[GitHub Service] History extracted: ${commits.length} commits, ${pullRequests.length} PRs, ${issues.length} issues.`);
 
     return {
       metadata: repoMetadata,
@@ -190,7 +194,7 @@ export async function fetchRepoData(owner, repo) {
       issues,
     };
   } catch (err) {
-    console.error(`[GitHub Service] Failed to ingest repository ${owner}/${repo}:`, err.message);
+    console.error(`[GitHub Service] Extraction failed for ${owner}/${repo}:`, err.message);
     if (!err.status) err.status = 500;
     throw err;
   }

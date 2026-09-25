@@ -6,22 +6,26 @@ dotenv.config();
 const SARVAM_API_URL = 'https://api.sarvam.ai/v1/chat/completions';
 
 /**
- * Generates an evidence-backed architectural answer using Sarvam AI (sarvam-2b).
- * Instructs the model to strictly base its explanation ONLY on the supplied Neo4j evidence.
+ * Generates an architectural explanation using Sarvam AI (sarvam-105b-conversations).
+ * Instructs Sarvam to structure the answer into WHY, EVIDENCE, HISTORY, and PEOPLE sections
+ * strictly based on the provided GraphRAG evidence.
  * 
- * @param {string} question - Natural language developer question
+ * @param {string} question - Developer question
  * @param {Array<Object>} evidence - Evidence list from graphService.querySubgraph
- * @returns {Promise<string>} Answer text
+ * @param {Object} [structuredContext] - Structured graph context object
+ * @returns {Promise<{ answer: string, confidence: string }>}
  */
-export async function generateAnswerWithEvidence(question, evidence) {
+export async function generateAnswerWithEvidence(question, evidence, structuredContext = {}) {
   const apiKey = process.env.SARVAM_API_KEY;
   const isConfigured = apiKey && apiKey !== 'your_sarvam_api_key';
 
   const cleanQuestion = (question || '').trim();
+  const hasEvidence = evidence && Array.isArray(evidence) && evidence.length > 0;
+  const confidence = hasEvidence ? 'supported' : 'insufficient_evidence';
 
   // Format evidence list for prompt context
   let evidenceContext = '';
-  if (!evidence || evidence.length === 0) {
+  if (!hasEvidence) {
     evidenceContext = 'No matching historical evidence (commits, PRs, issues, or review discussions) was found in the graph database for this query.';
   } else {
     evidenceContext = evidence
@@ -30,36 +34,51 @@ export async function generateAnswerWithEvidence(question, evidence) {
   }
 
   const systemPrompt = `You are a Senior Software Architecture and Code Archaeology expert.
-Your job is to answer the developer's question about "Why the code is like this" strictly based on the provided Repository Evidence.
+Your job is to answer the developer's question about "Why the code is like this" strictly based on the provided Repository Graph Evidence.
 
 Rules:
-1. Base your explanation ONLY on the supplied Repository Evidence.
-2. Never invent, assume, or pretend unsupported facts are known.
-3. If the evidence is insufficient or missing, clearly state what is known from the evidence and what remains unknown.
-4. Format your answer with clean Markdown and include explicit citations to commit SHAs, PR numbers, and author names.`;
+1. Base your explanation ONLY on the supplied Repository Graph Evidence.
+2. Never invent, assume, or pretend unsupported historical facts are known.
+3. If the evidence is insufficient or missing, explicitly state that evidence is insufficient.
+4. Clearly distinguish documented facts from inferred reasoning.
+
+You MUST format your response using EXACTLY these 4 section headings:
+
+WHY
+<concise explanation of why the code is like this based on evidence>
+
+EVIDENCE
+<what historical evidence supports it, citing PRs, commits, issues>
+
+HISTORY
+<relevant PR/commit/issue timeline>
+
+PEOPLE
+<relevant developer(s) and authors, if available>`;
 
   const userPrompt = `Developer Question: "${cleanQuestion}"
 
-Repository Evidence Collected:
+Repository Graph Evidence Collected:
 ${evidenceContext}
 
 Explain the likely rationale, intent, or decision behind this code structure based strictly on the evidence above.`;
 
   if (!isConfigured) {
-    console.warn('[Sarvam Service] SARVAM_API_KEY is missing or default placeholder. Using direct evidence synthesis.');
-    return generateFallbackAnswer(cleanQuestion, evidence);
+    console.warn('[Sarvam Service] SARVAM_API_KEY is missing or placeholder. Generating direct GraphRAG synthesis.');
+    const answer = generateFallbackAnswer(cleanQuestion, evidence, confidence);
+    return { answer, confidence };
   }
 
   try {
-    console.log('[Sarvam Service] Querying Sarvam AI completions API (sarvam-2b)...');
+    console.log('[Sarvam Service] Querying Sarvam AI completions API (sarvam-105b-conversations)...');
 
     const payload = {
-      model: 'sarvam-2b',
+      model: 'sarvam-105b-conversations',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      max_tokens: 600,
+      max_tokens: 650,
       temperature: 0.2,
     };
 
@@ -81,44 +100,60 @@ Explain the likely rationale, intent, or decision behind this code structure bas
     }
 
     console.log('[Sarvam Service] Sarvam AI answer generated successfully.');
-    return answer;
+    return { answer, confidence };
   } catch (err) {
     console.error('[Sarvam Service] Sarvam API Error Response:', JSON.stringify(err.response?.data || err.message));
-    return generateFallbackAnswer(cleanQuestion, evidence, err.response?.data?.message || err.message);
+    const answer = generateFallbackAnswer(cleanQuestion, evidence, confidence, err.response?.data?.message || err.message);
+    return { answer, confidence };
   }
 }
 
 /**
- * Fallback evidence synthesizer if Sarvam API key is unconfigured or request fails.
+ * Direct evidence synthesizer structured into WHY, EVIDENCE, HISTORY, and PEOPLE.
  */
-function generateFallbackAnswer(question, evidence, errorNotice = null) {
-  let output = `### 🔍 Code Archaeology & Rationale Analysis\n\n`;
+function generateFallbackAnswer(question, evidence, confidence, errorNotice = null) {
+  let output = '';
 
   if (errorNotice) {
-    output += `> ⚠️ *Note: Sarvam AI API request returned a notice (${errorNotice}). Synthesizing Graph Evidence directly below:*\n\n`;
-  } else {
-    output += `> 💡 *Note: Operating in direct evidence synthesis mode (SARVAM_API_KEY placeholder detected).*\n\n`;
+    output += `> ⚠️ *Note: Sarvam AI API request notice (${errorNotice}). Synthesizing Graph Evidence directly below:*\n\n`;
   }
 
-  output += `**Question:** "${question}"\n\n`;
-
-  if (!evidence || evidence.length === 0) {
-    output += `No relevant repository evidence (commits, PRs, issues, or review comments) was found in the graph database matching this question. Please ensure the repository has been ingested.\n`;
+  if (confidence === 'insufficient_evidence') {
+    output += `WHY\nInsufficient historical evidence was found in the graph database to explain why this code is structured this way.\n\n`;
+    output += `EVIDENCE\nNo matching commits, pull requests, decisions, or review discussions were found in the Neo4j graph for question: "${question}".\n\n`;
+    output += `HISTORY\nNo relevant timeline available for this query.\n\n`;
+    output += `PEOPLE\nNo developer attribution available.`;
     return output;
   }
 
-  output += `#### 📜 Retrieved Historical Evidence:\n\n`;
-
-  evidence.forEach((item, idx) => {
-    output += `##### ${idx + 1}. [${item.type.toUpperCase()}] ${item.title}\n`;
-    output += `- **Author**: @${item.author}\n`;
-    output += `- **Date/State**: ${item.date}\n`;
-    output += `- **Evidence Details**: ${item.reason}\n`;
-    if (item.url && item.url !== '#') {
-      output += `- **Link**: [View on GitHub](${item.url})\n`;
-    }
-    output += `\n`;
+  output += `WHY\n`;
+  output += `Based on repository history, this change was introduced to resolve architectural decisions and issues recorded in the codebase:\n`;
+  evidence.slice(0, 3).forEach((item) => {
+    output += `- ${item.reason}\n`;
   });
+  output += `\n`;
+
+  output += `EVIDENCE\n`;
+  evidence.forEach((item, idx) => {
+    output += `- **[${item.type.toUpperCase()}]** ${item.title} (by **@${item.author}** on ${item.date})\n`;
+  });
+  output += `\n`;
+
+  output += `HISTORY\n`;
+  evidence.forEach((item) => {
+    output += `- **${item.date}**: ${item.title} (${item.url !== '#' ? item.url : 'Graph Record'})\n`;
+  });
+  output += `\n`;
+
+  output += `PEOPLE\n`;
+  const authors = [...new Set(evidence.map((e) => e.author).filter((a) => a && a !== 'Unknown'))];
+  if (authors.length > 0) {
+    authors.forEach((author) => {
+      output += `- **@${author}** (Contributor/Author)\n`;
+    });
+  } else {
+    output += `- Author attribution not explicitly specified in graph nodes.\n`;
+  }
 
   return output;
 }

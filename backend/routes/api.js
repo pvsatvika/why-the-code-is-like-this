@@ -29,7 +29,7 @@ router.get('/health', async (req, res) => {
 
 /**
  * POST /api/ingest
- * Ingests repository history from GitHub and constructs Neo4j Decision Graph.
+ * Ingests repository history from GitHub and constructs Neo4j Decision Graph (Phase 3).
  * Input body: { repository: "owner/repo" } or { owner: "...", repo: "..." }
  */
 router.post('/ingest', async (req, res) => {
@@ -50,12 +50,12 @@ router.post('/ingest', async (req, res) => {
   }
 
   try {
-    console.log(`[API Route] Triggering repository ingestion for: ${owner}/${repo}`);
+    console.log(`[API Route] Triggering Phase 3 repository ingestion for: ${owner}/${repo}`);
 
-    // Step 1: Fetch GitHub history
+    // Step 1: Deep fetch GitHub history
     const repoData = await fetchRepoData(owner, repo);
 
-    // Step 2: Store decision graph in Neo4j
+    // Step 2: Build Phase 3 Decision Graph in Neo4j
     await buildDecisionGraph(repoData);
 
     return res.json({
@@ -87,8 +87,8 @@ router.post('/ingest', async (req, res) => {
 
 /**
  * POST /api/query
- * Executes GraphRAG query: fetches evidence from Neo4j and synthesizes explanation via Sarvam.
- * Input body: { question: string, repository?: string }
+ * Executes Multi-hop GraphRAG query: fetches evidence from Neo4j and synthesizes explanation via Sarvam AI.
+ * Input body: { question: string }
  */
 router.post('/query', async (req, res) => {
   const { question } = req.body;
@@ -102,20 +102,21 @@ router.post('/query', async (req, res) => {
   }
 
   try {
-    console.log(`[API Route] Processing query: "${question}"`);
+    console.log(`[API Route] Processing Phase 3 GraphRAG query: "${question}"`);
 
-    // Step 1: Retrieve evidence from Neo4j
-    const evidence = await querySubgraph(question);
+    // Step 1: Multi-hop graph retrieval from Neo4j
+    const { evidence, structuredContext } = await querySubgraph(question);
 
-    // Step 2: Generate answer with Sarvam AI
-    const answer = await generateAnswerWithEvidence(question, evidence);
+    // Step 2: Generate Sarvam AI explanation structured into WHY, EVIDENCE, HISTORY, PEOPLE
+    const { answer, confidence } = await generateAnswerWithEvidence(question, evidence, structuredContext);
 
     return res.json({
       answer,
+      confidence,
       evidence,
     });
   } catch (error) {
-    console.error(`[API Route] Query error:`, error.message);
+    console.error(`[API Route] GraphRAG Query error:`, error.message);
     return res.status(500).json({
       status: 'error',
       errorType: 'QUERY_FAILED',

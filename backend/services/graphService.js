@@ -9,9 +9,6 @@ const password = process.env.NEO4J_PASSWORD || 'password';
 
 let driver;
 
-/**
- * Returns singleton Neo4j driver instance.
- */
 function getDriver() {
   if (!driver) {
     driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
@@ -19,15 +16,11 @@ function getDriver() {
   return driver;
 }
 
-/**
- * Verifies Neo4j database connection.
- * @returns {Promise<{ connected: boolean, error: string|null }>}
- */
 export async function verifyConnection() {
   try {
     const d = getDriver();
     const serverInfo = await d.getServerInfo();
-    console.log(`[Neo4j Service] Connected successfully to server: ${serverInfo.address}`);
+    console.log(`[Neo4j Service] Connected to server: ${serverInfo.address}`);
     return { connected: true, error: null };
   } catch (err) {
     console.warn(`[Neo4j Service] Connection check failed: ${err.message}`);
@@ -36,10 +29,68 @@ export async function verifyConnection() {
 }
 
 /**
- * Stores repository history into Neo4j using MERGE statements for idempotency.
- * 
- * Nodes: Repository, Commit, PullRequest, Issue, Developer, File, Discussion
- * Relationships: HAS_COMMIT, HAS_PULL_REQUEST, HAS_ISSUE, MODIFIES, AUTHORED, CREATED, DISCUSSES, HAS_DISCUSSION, RELATED_TO
+ * Safely converts Neo4j Integers / BigInt / Objects into clean JS primitives.
+ */
+function safeValue(val, defaultVal = '') {
+  if (val === null || val === undefined) return defaultVal;
+  if (typeof val === 'string' || typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val;
+  if (typeof val === 'bigint') return Number(val);
+  if (typeof val === 'object') {
+    if (typeof val.toNumber === 'function') return val.toNumber();
+    if (val.low !== undefined) return val.low;
+    if (typeof val.toString === 'function') return val.toString();
+  }
+  return String(val);
+}
+
+/**
+ * Extracts Decision text signals from commit messages, PR descriptions, or comments.
+ */
+function extractDecisionSignal(text, sourceType, sourceId, author, date) {
+  if (!text || typeof text !== 'string') return null;
+
+  const decisionRegex = /\b(because|reason|chose|decided|instead|due to|workaround|breaking change|migration|deprecated|performance|compatibility|security)\b/i;
+  if (!decisionRegex.test(text)) return null;
+
+  const cleanText = text.trim().substring(0, 250);
+  const hash = Math.abs(cleanText.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
+  
+  return {
+    id: `dec_${sourceType}_${sourceId}_${hash}`,
+    text: cleanText,
+    sourceType,
+    sourceId: String(sourceId),
+    author: author || 'Unknown',
+    date: date || '',
+  };
+}
+
+/**
+ * Extracts Incident text signals from issue bodies, PR titles, or commit messages.
+ */
+function extractIncidentSignal(text, sourceType, sourceId, author, date) {
+  if (!text || typeof text !== 'string') return null;
+
+  const incidentRegex = /\b(bug|fix|regression|crash|vulnerability|failure|panic|memory leak|outage|issue)\b/i;
+  if (!incidentRegex.test(text)) return null;
+
+  const cleanText = text.trim().substring(0, 250);
+  const hash = Math.abs(cleanText.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
+
+  return {
+    id: `inc_${sourceType}_${sourceId}_${hash}`,
+    text: cleanText,
+    sourceType,
+    sourceId: String(sourceId),
+    author: author || 'Unknown',
+    date: date || '',
+  };
+}
+
+/**
+ * Stores repository history into Neo4j with full graph relationships:
+ * Repository, Commit, PullRequest, Issue, Developer, File, Discussion, Decision, Incident
  * 
  * @param {Object} repoData - Output from githubService.fetchRepoData
  */
@@ -48,7 +99,7 @@ export async function buildDecisionGraph(repoData) {
   const { owner, repo, url: repoUrl } = metadata;
   const repoId = `${owner}/${repo}`;
 
-  console.log(`[Neo4j Service] Writing decision graph for ${repoId}...`);
+  console.log(`[Neo4j Service] Building Phase 3 decision graph for ${repoId}...`);
 
   const d = getDriver();
   const session = d.session();
@@ -67,7 +118,7 @@ export async function buildDecisionGraph(repoData) {
       )
     );
 
-    // 2. Process Commits, Developers, and Files
+    // 2. Commits, Developers, Files, Decisions, Incidents
     for (const commit of commits) {
       const { sha, message, author, date, url: commitUrl, files = [] } = commit;
 
@@ -88,21 +139,62 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
+      // Create Canonical File Nodes and (Commit)-[:MODIFIES]->(File)
       for (const file of files) {
+        const fileId = `${repoId}/${file.filename}`;
         await session.executeWrite((tx) =>
           tx.run(
             `
             MATCH (c:Commit { sha: $sha })
-            MERGE (f:File { filename: $filename })
+            MERGE (f:File { id: $fileId })
+            SET f.filename = $filename
             MERGE (c)-[:MODIFIES]->(f)
             `,
-            { sha, filename: file.filename }
+            { sha, fileId, filename: file.filename }
+          )
+        );
+      }
+
+      // Check Commit Message for Decision or Incident Signals
+      const decSignal = extractDecisionSignal(message, 'commit', sha, author, date);
+      if (decSignal) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (c:Commit { sha: $sha })
+            MERGE (dec:Decision { id: $id })
+            SET dec.text = $text,
+                dec.sourceType = $sourceType,
+                dec.author = $author,
+                dec.date = $date
+            MERGE (c)-[:SUPPORTS]->(dec)
+            MERGE (dec)-[:IMPLEMENTED_BY]->(c)
+            `,
+            { sha, ...decSignal }
+          )
+        );
+      }
+
+      const incSignal = extractIncidentSignal(message, 'commit', sha, author, date);
+      if (incSignal) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (c:Commit { sha: $sha })
+            MERGE (inc:Incident { id: $id })
+            SET inc.text = $text,
+                inc.sourceType = $sourceType,
+                inc.author = $author,
+                inc.date = $date
+            MERGE (inc)-[:ADDRESSED_BY]->(c)
+            `,
+            { sha, ...incSignal }
           )
         );
       }
     }
 
-    // 3. Process Pull Requests, Developers, Discussions & File Links
+    // 3. Pull Requests, Developers, PR Commits, Discussions, Decisions
     for (const pr of pullRequests) {
       const prId = `${repoId}#${pr.number}`;
 
@@ -134,21 +226,41 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Link commits to PR if message references PR number or PR body references commit sha
-      await session.executeWrite((tx) =>
-        tx.run(
-          `
-          MATCH (pr:PullRequest { id: $prId })
-          MATCH (c:Commit)
-          WHERE c.message CONTAINS ('#' + toString($number))
-             OR toLower(pr.body) CONTAINS toLower(c.sha)
-          MERGE (c)-[:RELATED_TO]->(pr)
-          `,
-          { prId, number: neo4j.int(pr.number) }
-        )
-      );
+      // Link PR-associated commits reliably: (Commit)-[:RELATED_TO]->(PullRequest)
+      for (const prCommitSha of pr.pr_commits || []) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (pr:PullRequest { id: $prId })
+            MATCH (c:Commit { sha: $sha })
+            MERGE (c)-[:RELATED_TO]->(pr)
+            `,
+            { prId, sha: prCommitSha }
+          )
+        );
+      }
 
-      // Add Discussion nodes
+      // Check PR Title/Body for Decision Signals
+      const prDecSignal = extractDecisionSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.author, pr.merged_at);
+      if (prDecSignal) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (pr:PullRequest { id: $prId })
+            MERGE (dec:Decision { id: $id })
+            SET dec.text = $text,
+                dec.sourceType = $sourceType,
+                dec.author = $author,
+                dec.date = $date
+            MERGE (pr)-[:IMPLEMENTS]->(dec)
+            MERGE (dec)-[:MADE_IN]->(pr)
+            `,
+            { prId, ...prDecSignal }
+          )
+        );
+      }
+
+      // Process Discussions (Comments & Code Review Comments)
       for (const comment of pr.comments || []) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -160,10 +272,14 @@ export async function buildDecisionGraph(repoData) {
                 d.type = $type,
                 d.date = $date
             MERGE (pr)-[:HAS_DISCUSSION]->(d)
+
+            MERGE (dev:Developer { username: $user })
+            MERGE (dev)-[:PARTICIPATED_IN]->(d)
+            MERGE (d)-[:INVOLVES]->(dev)
             `,
             {
               prId,
-              commentId: comment.id,
+              commentId: String(comment.id),
               user: comment.user,
               body: comment.body,
               type: comment.type,
@@ -173,21 +289,45 @@ export async function buildDecisionGraph(repoData) {
         );
 
         if (comment.path) {
+          const fileId = `${repoId}/${comment.path}`;
           await session.executeWrite((tx) =>
             tx.run(
               `
               MATCH (pr:PullRequest { id: $prId })
-              MERGE (f:File { filename: $path })
+              MATCH (d:Discussion { id: $commentId })
+              MERGE (f:File { id: $fileId })
+              SET f.filename = $path
               MERGE (pr)-[:DISCUSSES]->(f)
+              MERGE (d)-[:ABOUT]->(f)
               `,
-              { prId, path: comment.path }
+              { prId, commentId: String(comment.id), fileId, path: comment.path }
+            )
+          );
+        }
+
+        // Discussion Decision Signal
+        const discDecSignal = extractDecisionSignal(comment.body, 'discussion', comment.id, comment.user, comment.date);
+        if (discDecSignal) {
+          await session.executeWrite((tx) =>
+            tx.run(
+              `
+              MATCH (d:Discussion { id: $commentId })
+              MERGE (dec:Decision { id: $id })
+              SET dec.text = $text,
+                  dec.sourceType = $sourceType,
+                  dec.author = $author,
+                  dec.date = $date
+              MERGE (d)-[:SUPPORTS]->(dec)
+              MERGE (dec)-[:SUPPORTED_BY]->(d)
+              `,
+              { commentId: String(comment.id), ...discDecSignal }
             )
           );
         }
       }
     }
 
-    // 4. Process Issues
+    // 4. Issues & Incidents
     for (const issue of issues) {
       const issueId = `${repoId}#${issue.number}`;
 
@@ -228,16 +368,36 @@ export async function buildDecisionGraph(repoData) {
           WHERE pr.body CONTAINS ('#' + toString($number))
              OR pr.title CONTAINS ('#' + toString($number))
           MERGE (i)-[:RELATED_TO]->(pr)
+          MERGE (pr)-[:ADDRESSES]->(i)
           `,
           { issueId, number: neo4j.int(issue.number) }
         )
       );
+
+      // Create Incident node if Issue describes bug/incident
+      const issueIncSignal = extractIncidentSignal(`${issue.title}\n${issue.body}`, 'issue', issue.number, issue.author, issue.created_at);
+      if (issueIncSignal) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (i:Issue { id: $issueId })
+            MERGE (inc:Incident { id: $id })
+            SET inc.text = $text,
+                inc.sourceType = $sourceType,
+                inc.author = $author,
+                inc.date = $date
+            MERGE (i)-[:DESCRIBES]->(inc)
+            `,
+            { issueId, ...issueIncSignal }
+          )
+        );
+      }
     }
 
-    console.log(`[Neo4j Service] Decision graph built successfully for ${repoId}.`);
+    console.log(`[Neo4j Service] Phase 3 decision graph constructed successfully for ${repoId}.`);
     return { success: true, repository: repoId };
   } catch (err) {
-    console.error(`[Neo4j Service] Graph build error:`, err.message);
+    console.error(`[Neo4j Service] Decision graph build error:`, err.message);
     throw err;
   } finally {
     await session.close();
@@ -245,51 +405,68 @@ export async function buildDecisionGraph(repoData) {
 }
 
 /**
- * Searches Neo4j for relevant commits, PRs, issues, and discussions matching keywords.
- * Returns formatted evidence list.
+ * Multi-hop GraphRAG Search Engine:
+ * Identifies entities, traverses connected graph neighborhood (File -> Commit -> PR -> Discussion -> Decision -> Incident),
+ * ranks evidence, and returns structured evidence context.
  * 
- * @param {string} question - Natural language question
- * @returns {Promise<Array<Object>>} List of evidence items
+ * @param {string} question - Natural language developer question
+ * @returns {Promise<{ evidence: Array<Object>, structuredContext: Object }>}
  */
 export async function querySubgraph(question) {
   if (!question || typeof question !== 'string') {
-    return [];
+    return { evidence: [], structuredContext: {} };
   }
 
-  // Extract keywords (> 3 chars) from question
+  // Extract candidate keywords (> 3 chars)
   const words = question
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from'].includes(w));
+    .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from', 'does', 'have', 'been'].includes(w));
 
   const keyword = words[0] || question.trim();
-  console.log(`[Neo4j Service] Querying subgraph for keyword: "${keyword}"...`);
+  console.log(`[Neo4j Service] Multi-hop GraphRAG search for keyword: "${keyword}"...`);
 
   const d = getDriver();
   const session = d.session();
 
   try {
     const cypher = `
-      // 1. Commits matching keyword or modified file
-      MATCH (c:Commit)
-      WHERE toLower(c.message) CONTAINS toLower($keyword)
-         OR EXISTS {
-           MATCH (c)-[:MODIFIES]->(f:File)
-           WHERE toLower(f.filename) CONTAINS toLower($keyword)
-         }
+      // 1. Decisions & Incidents matching keyword
+      MATCH (dec:Decision)
+      WHERE toLower(dec.text) CONTAINS toLower($keyword)
+      OPTIONAL MATCH (dec)-[:MADE_IN]->(pr:PullRequest)
+      OPTIONAL MATCH (dec)-[:IMPLEMENTED_BY]->(c:Commit)
       OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
-      RETURN 'commit' AS type,
-             c.message AS title,
-             dev.username AS author,
-             c.date AS date,
-             c.url AS url,
-             ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS reason
+      RETURN 'decision' AS type,
+             dec.id AS id,
+             ('Decision: ' + dec.text) AS title,
+             dec.author AS author,
+             dec.date AS date,
+             coalesce(pr.url, c.url, '#') AS url,
+             ('Architectural Decision: ' + dec.text + ' (Source: ' + dec.sourceType + ')') AS reason,
+             1 AS rank
       LIMIT 10
 
       UNION
 
-      // 2. Pull Requests matching keyword or connected files
+      // 2. Incidents matching keyword
+      MATCH (inc:Incident)
+      WHERE toLower(inc.text) CONTAINS toLower($keyword)
+      OPTIONAL MATCH (i:Issue)-[:DESCRIBES]->(inc)
+      RETURN 'incident' AS type,
+             inc.id AS id,
+             ('Incident: ' + inc.text) AS title,
+             inc.author AS author,
+             inc.date AS date,
+             coalesce(i.url, '#') AS url,
+             ('Reported Incident/Problem: ' + inc.text) AS reason,
+             2 AS rank
+      LIMIT 10
+
+      UNION
+
+      // 3. Pull Requests & Discussions matching keyword or connected file
       MATCH (pr:PullRequest)
       WHERE toLower(pr.title) CONTAINS toLower($keyword)
          OR toLower(pr.body) CONTAINS toLower($keyword)
@@ -299,58 +476,101 @@ export async function querySubgraph(question) {
          }
       OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(pr)
       RETURN 'pull_request' AS type,
+             pr.id AS id,
              ('PR #' + toString(pr.number) + ': ' + pr.title) AS title,
              dev.username AS author,
              pr.merged_at AS date,
              pr.url AS url,
-             ('Pull Request #' + toString(pr.number) + ': ' + pr.title + ' - ' + substring(pr.body, 0, 150)) AS reason
+             ('Pull Request #' + toString(pr.number) + ': ' + pr.title + ' - ' + substring(pr.body, 0, 180)) AS reason,
+             3 AS rank
       LIMIT 10
 
       UNION
 
-      // 3. Issues matching keyword
+      // 4. Issues matching keyword
       MATCH (i:Issue)
       WHERE toLower(i.title) CONTAINS toLower($keyword)
          OR toLower(i.body) CONTAINS toLower($keyword)
       OPTIONAL MATCH (dev:Developer)-[:CREATED]->(i)
       RETURN 'issue' AS type,
+             i.id AS id,
              ('Issue #' + toString(i.number) + ': ' + i.title) AS title,
              dev.username AS author,
              i.state AS date,
              i.url AS url,
-             ('Issue #' + toString(i.number) + ' (' + i.state + '): ' + i.title + ' - ' + substring(i.body, 0, 150)) AS reason
+             ('Issue #' + toString(i.number) + ' (' + i.state + '): ' + i.title + ' - ' + substring(i.body, 0, 180)) AS reason,
+             4 AS rank
       LIMIT 10
 
       UNION
 
-      // 4. Discussions matching keyword
+      // 5. Commits matching keyword or modified file
+      MATCH (c:Commit)
+      WHERE toLower(c.message) CONTAINS toLower($keyword)
+         OR EXISTS {
+           MATCH (c)-[:MODIFIES]->(f:File)
+           WHERE toLower(f.filename) CONTAINS toLower($keyword)
+         }
+      OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
+      RETURN 'commit' AS type,
+             c.sha AS id,
+             ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS title,
+             dev.username AS author,
+             c.date AS date,
+             c.url AS url,
+             ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS reason,
+             5 AS rank
+      LIMIT 10
+
+      UNION
+
+      // 6. Discussions matching keyword
       MATCH (d:Discussion)
       WHERE toLower(d.body) CONTAINS toLower($keyword)
       OPTIONAL MATCH (pr:PullRequest)-[:HAS_DISCUSSION]->(d)
       RETURN 'discussion' AS type,
+             d.id AS id,
              ('Discussion by @' + d.user) AS title,
              d.user AS author,
              d.date AS date,
-             pr.url AS url,
-             ('Review Comment by @' + d.user + ': ' + substring(d.body, 0, 200)) AS reason
+             coalesce(pr.url, '#') AS url,
+             ('Review Comment by @' + d.user + ': ' + substring(d.body, 0, 200)) AS reason,
+             6 AS rank
       LIMIT 10
     `;
 
     const result = await session.executeRead((tx) => tx.run(cypher, { keyword }));
 
-    const evidence = result.records.map((record) => ({
-      type: record.get('type') || 'evidence',
-      title: record.get('title') || 'Historical Context',
-      author: record.get('author') || 'Unknown',
-      date: record.get('date') || 'N/A',
-      url: record.get('url') || '#',
-      reason: record.get('reason') || '',
+    const rawEvidence = result.records.map((record) => ({
+      type: safeValue(record.get('type'), 'evidence'),
+      id: safeValue(record.get('id'), 'N/A'),
+      title: safeValue(record.get('title'), 'Historical Evidence'),
+      author: safeValue(record.get('author'), 'Unknown'),
+      date: safeValue(record.get('date'), 'N/A'),
+      url: safeValue(record.get('url'), '#'),
+      reason: safeValue(record.get('reason'), ''),
+      rank: Number(safeValue(record.get('rank'), 99)) || 99,
     }));
 
-    console.log(`[Neo4j Service] Extracted ${evidence.length} evidence records.`);
-    return evidence;
+    // Sort evidence by rank priority
+    const evidence = rawEvidence.sort((a, b) => a.rank - b.rank);
+
+    // Group into structured context object
+    const structuredContext = {
+      question,
+      keyword,
+      decisions: evidence.filter((e) => e.type === 'decision'),
+      incidents: evidence.filter((e) => e.type === 'incident'),
+      pullRequests: evidence.filter((e) => e.type === 'pull_request'),
+      issues: evidence.filter((e) => e.type === 'issue'),
+      commits: evidence.filter((e) => e.type === 'commit'),
+      discussions: evidence.filter((e) => e.type === 'discussion'),
+    };
+
+    console.log(`[Neo4j Service] Multi-hop search returned ${evidence.length} evidence records.`);
+    return { evidence, structuredContext };
   } catch (err) {
-    console.error(`[Neo4j Service] Subgraph query error:`, err.message);
+    console.error(`[Neo4j Service] GraphRAG query error:`, err.message);
     throw err;
   } finally {
     await session.close();
