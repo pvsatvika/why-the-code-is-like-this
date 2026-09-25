@@ -3,9 +3,9 @@ import { HelpCircle, Search, Loader2, Sparkles, MessageSquareCode, Compass } fro
 
 const SUGGESTED_QUESTIONS = [
   "Why was error handling modified in router.js?",
-  "What historical decision led to refactoring middleware dispatch?",
-  "Why were event loop listeners restructured in core files?",
-  "What PR addressed body parser limits and memory usage?"
+  "Why was ArrayBuffer handling modified in res.send()?",
+  "Why was body parsing handling updated?",
+  "What problem was this change trying to solve?"
 ];
 
 export default function QuestionPanel({
