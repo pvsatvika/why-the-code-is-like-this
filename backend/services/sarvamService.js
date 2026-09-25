@@ -6,11 +6,10 @@ dotenv.config();
 const SARVAM_API_URL = 'https://api.sarvam.ai/v1/chat/completions';
 
 /**
- * Sanitizes and truncates graph evidence context to prevent empty string payloads,
- * invalid types, or token context overflows.
+ * Sanitizes and formats graph evidence context into a clean string.
  * 
  * @param {Array<Object>} graphContext 
- * @returns {string} Cleaned, bounded context string
+ * @returns {string} Cleaned context string
  */
 function sanitizeGraphContext(graphContext) {
   if (!graphContext || !Array.isArray(graphContext) || graphContext.length === 0) {
@@ -41,9 +40,8 @@ function sanitizeGraphContext(graphContext) {
 
   const fullText = cleanItems.join('\n---\n');
 
-  // Truncate to maximum 3500 characters to prevent token payload validation errors
-  if (fullText.length > 3500) {
-    return fullText.substring(0, 3500) + '\n...[Evidence Context Truncated]';
+  if (fullText.length > 3000) {
+    return fullText.substring(0, 3000) + '\n...[Context Truncated]';
   }
   return fullText;
 }
@@ -61,38 +59,31 @@ export async function generateAnswerWithEvidence(question, graphContext) {
   const sanitizedContext = sanitizeGraphContext(graphContext);
   const cleanQuestion = (question || '').trim() || 'Why was this code modified?';
 
-  const systemPrompt = `You are a Senior Software Architect specializing in developer intent analysis and code forensics.
-Answer the developer's question about "Why the code is like this" based strictly on the provided Graph Evidence (commits, PRs, author names, dates, discussions).
+  const systemPrompt = "You are a software architecture expert.";
 
-Rules:
-1. Base your answer strictly on the provided Graph Evidence.
-2. Format output using clean Markdown with headings and bullet points.
-3. Cite specific commits [Commit SHA], PR numbers [PR #Num], and discussion quotes.
-4. Explain developer intent, rationale, and trade-offs clearly.`;
-
-  const userPrompt = `Developer Question: "${cleanQuestion}"
+  const promptText = `Developer Question: "${cleanQuestion}"
 
 Graph Evidence Context:
 ${sanitizedContext}
 
-Provide a clear, evidence-backed architectural answer with markdown citations.`;
+Provide a concise, evidence-backed architectural answer explaining why the code is structured or modified this way, with Markdown formatting and explicit citations ([Commit SHA], [PR #Num]).`;
 
-  // Check API key configuration
   if (!apiKey || apiKey === 'your_sarvam_api_key') {
-    console.warn('[Sarvam Service] SARVAM_API_KEY is not configured or using default placeholder. Returning local GraphRAG synthesis.');
+    console.warn('[Sarvam Service] SARVAM_API_KEY is not configured or using default placeholder.');
     return generateFallbackAnswer(cleanQuestion, graphContext);
   }
 
   try {
-    console.log('[Sarvam Service] Sending sanitized payload to Sarvam AI completions API...');
+    console.log('[Sarvam Service] Sending clean request payload to Sarvam AI...');
 
     const payload = {
       model: 'sarvam-2b',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: promptText }
       ],
-      temperature: 0.2,
+      max_tokens: 500,
+      temperature: 0.2
     };
 
     const response = await axios.post(
@@ -101,28 +92,21 @@ Provide a clear, evidence-backed architectural answer with markdown citations.`;
       {
         headers: {
           'Content-Type': 'application/json',
-          'api-subscription-key': apiKey,
-          'Authorization': `Bearer ${apiKey}`,
+          'api-subscription-key': apiKey
         },
-        timeout: 25000,
+        timeout: 25000
       }
     );
 
     const answer = response.data?.choices?.[0]?.message?.content;
     if (!answer || typeof answer !== 'string') {
-      throw new Error('Sarvam API returned unexpected or empty choices payload.');
+      throw new Error('Sarvam API returned unexpected or empty response.');
     }
 
-    console.log('[Sarvam Service] Sarvam AI response received successfully.');
+    console.log('[Sarvam Service] Sarvam AI answer generated successfully.');
     return answer;
   } catch (err) {
-    console.error('[Sarvam Service] ❌ Sarvam AI API Error:');
-    if (err.response) {
-      console.error(`Status Code: ${err.response.status}`);
-      console.error(`Response Data:`, JSON.stringify(err.response.data, null, 2));
-    } else {
-      console.error(`Error Message: ${err.message}`);
-    }
+    console.log("Sarvam API Response Payload Error:", JSON.stringify(err.response?.data));
 
     return generateFallbackAnswer(cleanQuestion, graphContext, err.response?.data?.message || err.message);
   }
