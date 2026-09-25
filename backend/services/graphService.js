@@ -3,12 +3,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const uri = process.env.NEO4J_URI || 'neo4j+s://xxxxxx.databases.neo4j.io';
+const uri = process.env.NEO4J_URI || 'bolt://localhost:7687';
 const user = process.env.NEO4J_USER || 'neo4j';
-const password = process.env.NEO4J_PASSWORD || 'your_neo4j_password';
+const password = process.env.NEO4J_PASSWORD || 'password';
 
 let driver;
 
+/**
+ * Returns singleton Neo4j driver instance.
+ */
 function getDriver() {
   if (!driver) {
     driver = neo4j.driver(uri, neo4j.auth.basic(user, password));
@@ -16,188 +19,225 @@ function getDriver() {
   return driver;
 }
 
+/**
+ * Verifies Neo4j database connection.
+ * @returns {Promise<{ connected: boolean, error: string|null }>}
+ */
 export async function verifyConnection() {
   try {
     const d = getDriver();
     const serverInfo = await d.getServerInfo();
-    console.log(`[Neo4j Graph] Connected to server: ${serverInfo.address}`);
-    return true;
+    console.log(`[Neo4j Service] Connected successfully to server: ${serverInfo.address}`);
+    return { connected: true, error: null };
   } catch (err) {
-    console.warn(`[Neo4j Graph] Connection warning: ${err.message}`);
-    return false;
+    console.warn(`[Neo4j Service] Connection check failed: ${err.message}`);
+    return { connected: false, error: err.message };
   }
 }
 
 /**
- * Wipes graph data for a specific repository or clears the database.
- * @param {string} [owner]
- * @param {string} [repo]
- */
-export async function clearDatabase(owner, repo) {
-  const d = getDriver();
-  const session = d.session();
-  try {
-    if (owner && repo) {
-      console.log(`[Neo4j Graph] Clearing existing graph nodes for repo: ${owner}/${repo}...`);
-      await session.executeWrite((tx) =>
-        tx.run(
-          `
-          MATCH (r:Repository { name: $repo, owner: $owner })
-          OPTIONAL MATCH (r)-[:CONTAINS]->(e:CodeEntity)
-          OPTIONAL MATCH (e)-[:MODIFIED_IN]->(c:Commit)
-          OPTIONAL MATCH (c)-[:BELONGS_TO]->(pr:PullRequest)
-          OPTIONAL MATCH (pr)-[:DISCUSSES]->(d:Discussion)
-          DETACH DELETE r, e, c, pr, d
-          `,
-          { owner, repo }
-        )
-      );
-    } else {
-      console.log('[Neo4j Graph] Wiping all nodes and relationships...');
-      await session.executeWrite((tx) => tx.run('MATCH (n) DETACH DELETE n'));
-    }
-  } catch (err) {
-    console.warn(`[Neo4j Graph] Clear database warning:`, err.message);
-  } finally {
-    await session.close();
-  }
-}
-
-/**
- * Constructs a decision graph for a specific repository in Neo4j.
+ * Stores repository history into Neo4j using MERGE statements for idempotency.
  * 
- * @param {Object} repoData - Object containing { owner, repo, commits, pullRequests }
+ * Nodes: Repository, Commit, PullRequest, Issue, Developer, File, Discussion
+ * Relationships: HAS_COMMIT, HAS_PULL_REQUEST, HAS_ISSUE, MODIFIES, AUTHORED, CREATED, DISCUSSES, HAS_DISCUSSION, RELATED_TO
+ * 
+ * @param {Object} repoData - Output from githubService.fetchRepoData
  */
 export async function buildDecisionGraph(repoData) {
-  const { owner, repo, commits = [], pullRequests = [] } = repoData;
-  console.log(`[Neo4j Graph] Building multi-repo decision graph for ${owner}/${repo}...`);
+  const { metadata, commits = [], pullRequests = [], issues = [] } = repoData;
+  const { owner, repo, url: repoUrl } = metadata;
+  const repoId = `${owner}/${repo}`;
 
-  await clearDatabase(owner, repo);
+  console.log(`[Neo4j Service] Writing decision graph for ${repoId}...`);
 
   const d = getDriver();
   const session = d.session();
 
   try {
-    // 1. Repository Node
+    // 1. Create Repository Node
     await session.executeWrite((tx) =>
-      tx.run(`MERGE (r:Repository { name: $repo, owner: $owner })`, { repo, owner })
+      tx.run(
+        `
+        MERGE (r:Repository { id: $repoId })
+        SET r.name = $repo,
+            r.owner = $owner,
+            r.url = $repoUrl
+        `,
+        { repoId, repo, owner, repoUrl }
+      )
     );
 
-    // 2. Process Commits & Code Entities
+    // 2. Process Commits, Developers, and Files
     for (const commit of commits) {
+      const { sha, message, author, date, url: commitUrl, files = [] } = commit;
+
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MERGE (c:Commit { sha: $sha, owner: $owner, repo: $repo })
+          MATCH (r:Repository { id: $repoId })
+          MERGE (c:Commit { sha: $sha })
           SET c.message = $message,
-              c.author = $author,
               c.date = $date,
-              c.url = $url
+              c.url = $commitUrl
+          MERGE (r)-[:HAS_COMMIT]->(c)
+
+          MERGE (dev:Developer { username: $author })
+          MERGE (dev)-[:AUTHORED]->(c)
           `,
-          {
-            sha: commit.sha,
-            owner,
-            repo,
-            message: commit.message || '',
-            author: commit.author?.name || 'Unknown',
-            date: commit.author?.date || '',
-            url: commit.html_url || '',
-          }
+          { repoId, sha, message, date: date || '', commitUrl: commitUrl || '', author }
         )
       );
 
-      for (const file of commit.files || []) {
+      for (const file of files) {
         await session.executeWrite((tx) =>
           tx.run(
             `
-            MATCH (r:Repository { name: $repo, owner: $owner })
-            MATCH (c:Commit { sha: $sha, owner: $owner, repo: $repo })
-            MERGE (e:CodeEntity { filename: $filename, owner: $owner, repo: $repo })
-            MERGE (r)-[:CONTAINS]->(e)
-            MERGE (e)-[:MODIFIED_IN]->(c)
+            MATCH (c:Commit { sha: $sha })
+            MERGE (f:File { filename: $filename })
+            MERGE (c)-[:MODIFIES]->(f)
             `,
-            {
-              repo,
-              owner,
-              sha: commit.sha,
-              filename: file.filename,
-            }
+            { sha, filename: file.filename }
           )
         );
       }
     }
 
-    // 3. Process Pull Requests & Discussions
+    // 3. Process Pull Requests, Developers, Discussions & File Links
     for (const pr of pullRequests) {
+      const prId = `${repoId}#${pr.number}`;
+
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MERGE (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
-          SET pr.title = $title,
+          MATCH (r:Repository { id: $repoId })
+          MERGE (pr:PullRequest { id: $prId })
+          SET pr.number = $number,
+              pr.title = $title,
               pr.body = $body,
-              pr.user = $user,
-              pr.merged_at = $merged_at,
-              pr.url = $url
+              pr.merged_at = $mergedAt,
+              pr.url = $prUrl
+          MERGE (r)-[:HAS_PULL_REQUEST]->(pr)
+
+          MERGE (dev:Developer { username: $author })
+          MERGE (dev)-[:AUTHORED]->(pr)
           `,
           {
+            repoId,
+            prId,
             number: neo4j.int(pr.number),
-            owner,
-            repo,
-            title: pr.title || '',
-            body: pr.body || '',
-            user: pr.user || 'Unknown',
-            merged_at: pr.merged_at || '',
-            url: pr.html_url || '',
+            title: pr.title,
+            body: pr.body,
+            mergedAt: pr.merged_at || '',
+            prUrl: pr.url || '',
+            author: pr.author,
           }
         )
       );
 
-      // Link Commits to PR if PR references commit or commit references PR number
+      // Link commits to PR if message references PR number or PR body references commit sha
       await session.executeWrite((tx) =>
         tx.run(
           `
-          MATCH (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
-          MATCH (c:Commit { owner: $owner, repo: $repo })
+          MATCH (pr:PullRequest { id: $prId })
+          MATCH (c:Commit)
           WHERE c.message CONTAINS ('#' + toString($number))
              OR toLower(pr.body) CONTAINS toLower(c.sha)
-          MERGE (c)-[:BELONGS_TO]->(pr)
+          MERGE (c)-[:RELATED_TO]->(pr)
           `,
-          { number: neo4j.int(pr.number), owner, repo }
+          { prId, number: neo4j.int(pr.number) }
         )
       );
 
-      // Create Discussions
+      // Add Discussion nodes
       for (const comment of pr.comments || []) {
         await session.executeWrite((tx) =>
           tx.run(
             `
-            MATCH (pr:PullRequest { number: $number, owner: $owner, repo: $repo })
-            CREATE (d:Discussion {
-              user: $user,
-              body: $body,
-              type: $type,
-              date: $date
-            })
-            CREATE (pr)-[:DISCUSSES]->(d)
+            MATCH (pr:PullRequest { id: $prId })
+            MERGE (d:Discussion { id: $commentId })
+            SET d.user = $user,
+                d.body = $body,
+                d.type = $type,
+                d.date = $date
+            MERGE (pr)-[:HAS_DISCUSSION]->(d)
             `,
             {
-              number: neo4j.int(pr.number),
-              owner,
-              repo,
-              user: comment.user || 'Unknown',
-              body: comment.body || '',
-              type: comment.type || 'comment',
-              date: comment.created_at || '',
+              prId,
+              commentId: comment.id,
+              user: comment.user,
+              body: comment.body,
+              type: comment.type,
+              date: comment.date || '',
             }
           )
         );
+
+        if (comment.path) {
+          await session.executeWrite((tx) =>
+            tx.run(
+              `
+              MATCH (pr:PullRequest { id: $prId })
+              MERGE (f:File { filename: $path })
+              MERGE (pr)-[:DISCUSSES]->(f)
+              `,
+              { prId, path: comment.path }
+            )
+          );
+        }
       }
     }
 
-    console.log(`[Neo4j Graph] Multi-repo graph updated for ${owner}/${repo}.`);
-    return { success: true, owner, repo };
+    // 4. Process Issues
+    for (const issue of issues) {
+      const issueId = `${repoId}#${issue.number}`;
+
+      await session.executeWrite((tx) =>
+        tx.run(
+          `
+          MATCH (r:Repository { id: $repoId })
+          MERGE (i:Issue { id: $issueId })
+          SET i.number = $number,
+              i.title = $title,
+              i.body = $body,
+              i.state = $state,
+              i.url = $issueUrl
+          MERGE (r)-[:HAS_ISSUE]->(i)
+
+          MERGE (dev:Developer { username: $author })
+          MERGE (dev)-[:CREATED]->(i)
+          `,
+          {
+            repoId,
+            issueId,
+            number: neo4j.int(issue.number),
+            title: issue.title,
+            body: issue.body,
+            state: issue.state,
+            issueUrl: issue.url || '',
+            author: issue.author,
+          }
+        )
+      );
+
+      // Link Issue to PR if PR references issue number
+      await session.executeWrite((tx) =>
+        tx.run(
+          `
+          MATCH (i:Issue { id: $issueId })
+          MATCH (pr:PullRequest)
+          WHERE pr.body CONTAINS ('#' + toString($number))
+             OR pr.title CONTAINS ('#' + toString($number))
+          MERGE (i)-[:RELATED_TO]->(pr)
+          `,
+          { issueId, number: neo4j.int(issue.number) }
+        )
+      );
+    }
+
+    console.log(`[Neo4j Service] Decision graph built successfully for ${repoId}.`);
+    return { success: true, repository: repoId };
   } catch (err) {
-    console.error(`[Neo4j Graph] Error building graph for ${owner}/${repo}:`, err.message);
+    console.error(`[Neo4j Service] Graph build error:`, err.message);
     throw err;
   } finally {
     await session.close();
@@ -205,77 +245,112 @@ export async function buildDecisionGraph(repoData) {
 }
 
 /**
- * Queries Neo4j for a matching subgraph context.
+ * Searches Neo4j for relevant commits, PRs, issues, and discussions matching keywords.
+ * Returns formatted evidence list.
  * 
- * @param {string} keyword - Search term or file name
- * @returns {Promise<Array<Object>>} Subgraph evidence
+ * @param {string} question - Natural language question
+ * @returns {Promise<Array<Object>>} List of evidence items
  */
-export async function querySubgraph(keyword) {
-  if (!keyword || typeof keyword !== 'string') {
+export async function querySubgraph(question) {
+  if (!question || typeof question !== 'string') {
     return [];
   }
+
+  // Extract keywords (> 3 chars) from question
+  const words = question
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from'].includes(w));
+
+  const keyword = words[0] || question.trim();
+  console.log(`[Neo4j Service] Querying subgraph for keyword: "${keyword}"...`);
 
   const d = getDriver();
   const session = d.session();
 
   try {
     const cypher = `
-      MATCH (e:CodeEntity) WHERE toLower(e.filename) CONTAINS toLower($keyword)
-      OPTIONAL MATCH (e)-[:MODIFIED_IN]->(c:Commit)
-      OPTIONAL MATCH (c)-[:BELONGS_TO]->(pr:PullRequest)
-      OPTIONAL MATCH (pr)-[:DISCUSSES]->(d:Discussion)
-      RETURN e.filename AS codeEntity,
-             c.sha AS commitSha,
-             c.message AS commitMessage,
-             c.author AS commitAuthor,
-             c.date AS commitDate,
-             pr.number AS prNumber,
-             pr.title AS prTitle,
-             pr.body AS prBody,
-             collect(DISTINCT { user: d.user, body: d.body, type: d.type, date: d.date }) AS discussions
+      // 1. Commits matching keyword or modified file
+      MATCH (c:Commit)
+      WHERE toLower(c.message) CONTAINS toLower($keyword)
+         OR EXISTS {
+           MATCH (c)-[:MODIFIES]->(f:File)
+           WHERE toLower(f.filename) CONTAINS toLower($keyword)
+         }
+      OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
+      RETURN 'commit' AS type,
+             c.message AS title,
+             dev.username AS author,
+             c.date AS date,
+             c.url AS url,
+             ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS reason
+      LIMIT 10
 
       UNION
 
-      MATCH (c:Commit) WHERE toLower(c.message) CONTAINS toLower($keyword)
-      OPTIONAL MATCH (e:CodeEntity)-[:MODIFIED_IN]->(c)
-      OPTIONAL MATCH (c)-[:BELONGS_TO]->(pr:PullRequest)
-      OPTIONAL MATCH (pr)-[:DISCUSSES]->(d:Discussion)
-      RETURN e.filename AS codeEntity,
-             c.sha AS commitSha,
-             c.message AS commitMessage,
-             c.author AS commitAuthor,
-             c.date AS commitDate,
-             pr.number AS prNumber,
-             pr.title AS prTitle,
-             pr.body AS prBody,
-             collect(DISTINCT { user: d.user, body: d.body, type: d.type, date: d.date }) AS discussions
-      LIMIT 50
+      // 2. Pull Requests matching keyword or connected files
+      MATCH (pr:PullRequest)
+      WHERE toLower(pr.title) CONTAINS toLower($keyword)
+         OR toLower(pr.body) CONTAINS toLower($keyword)
+         OR EXISTS {
+           MATCH (pr)-[:DISCUSSES]->(f:File)
+           WHERE toLower(f.filename) CONTAINS toLower($keyword)
+         }
+      OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(pr)
+      RETURN 'pull_request' AS type,
+             ('PR #' + toString(pr.number) + ': ' + pr.title) AS title,
+             dev.username AS author,
+             pr.merged_at AS date,
+             pr.url AS url,
+             ('Pull Request #' + toString(pr.number) + ': ' + pr.title + ' - ' + substring(pr.body, 0, 150)) AS reason
+      LIMIT 10
+
+      UNION
+
+      // 3. Issues matching keyword
+      MATCH (i:Issue)
+      WHERE toLower(i.title) CONTAINS toLower($keyword)
+         OR toLower(i.body) CONTAINS toLower($keyword)
+      OPTIONAL MATCH (dev:Developer)-[:CREATED]->(i)
+      RETURN 'issue' AS type,
+             ('Issue #' + toString(i.number) + ': ' + i.title) AS title,
+             dev.username AS author,
+             i.state AS date,
+             i.url AS url,
+             ('Issue #' + toString(i.number) + ' (' + i.state + '): ' + i.title + ' - ' + substring(i.body, 0, 150)) AS reason
+      LIMIT 10
+
+      UNION
+
+      // 4. Discussions matching keyword
+      MATCH (d:Discussion)
+      WHERE toLower(d.body) CONTAINS toLower($keyword)
+      OPTIONAL MATCH (pr:PullRequest)-[:HAS_DISCUSSION]->(d)
+      RETURN 'discussion' AS type,
+             ('Discussion by @' + d.user) AS title,
+             d.user AS author,
+             d.date AS date,
+             pr.url AS url,
+             ('Review Comment by @' + d.user + ': ' + substring(d.body, 0, 200)) AS reason
+      LIMIT 10
     `;
 
-    const result = await session.executeRead((tx) =>
-      tx.run(cypher, { keyword: keyword.trim() })
-    );
+    const result = await session.executeRead((tx) => tx.run(cypher, { keyword }));
 
-    return result.records.map((record) => {
-      const prNumber = record.get('prNumber');
-      return {
-        codeEntity: record.get('codeEntity'),
-        commit: record.get('commitSha') ? {
-          sha: record.get('commitSha'),
-          message: record.get('commitMessage'),
-          author: record.get('commitAuthor'),
-          date: record.get('commitDate'),
-        } : null,
-        pullRequest: prNumber ? {
-          number: typeof prNumber === 'object' && prNumber.toNumber ? prNumber.toNumber() : prNumber,
-          title: record.get('prTitle'),
-          body: record.get('prBody'),
-        } : null,
-        discussions: (record.get('discussions') || []).filter((d) => d && d.user),
-      };
-    });
+    const evidence = result.records.map((record) => ({
+      type: record.get('type') || 'evidence',
+      title: record.get('title') || 'Historical Context',
+      author: record.get('author') || 'Unknown',
+      date: record.get('date') || 'N/A',
+      url: record.get('url') || '#',
+      reason: record.get('reason') || '',
+    }));
+
+    console.log(`[Neo4j Service] Extracted ${evidence.length} evidence records.`);
+    return evidence;
   } catch (err) {
-    console.error(`[Neo4j Graph] Error querying subgraph:`, err.message);
+    console.error(`[Neo4j Service] Subgraph query error:`, err.message);
     throw err;
   } finally {
     await session.close();

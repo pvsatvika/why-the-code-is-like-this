@@ -6,84 +6,61 @@ dotenv.config();
 const SARVAM_API_URL = 'https://api.sarvam.ai/v1/chat/completions';
 
 /**
- * Sanitizes and formats graph evidence context into a clean string.
+ * Generates an evidence-backed architectural answer using Sarvam AI (sarvam-2b).
+ * Instructs the model to strictly base its explanation ONLY on the supplied Neo4j evidence.
  * 
- * @param {Array<Object>} graphContext 
- * @returns {string} Cleaned context string
+ * @param {string} question - Natural language developer question
+ * @param {Array<Object>} evidence - Evidence list from graphService.querySubgraph
+ * @returns {Promise<string>} Answer text
  */
-function sanitizeGraphContext(graphContext) {
-  if (!graphContext || !Array.isArray(graphContext) || graphContext.length === 0) {
-    return 'No matching Neo4j decision graph evidence found for this query.';
-  }
-
-  const cleanItems = graphContext.map((item, index) => {
-    let summary = `[Evidence #${index + 1}]\n`;
-    if (item.codeEntity) summary += `Code File: ${item.codeEntity}\n`;
-    if (item.commit) {
-      summary += `Commit: ${item.commit.sha ? item.commit.sha.substring(0, 7) : 'N/A'} by ${item.commit.author || 'Unknown'}\n`;
-      summary += `Commit Message: ${item.commit.message || ''}\n`;
-    }
-    if (item.pullRequest) {
-      summary += `Pull Request #${item.pullRequest.number}: "${item.pullRequest.title || ''}"\n`;
-      if (item.pullRequest.body) {
-        summary += `PR Rationale: ${(item.pullRequest.body || '').substring(0, 200)}...\n`;
-      }
-    }
-    if (item.discussions && item.discussions.length > 0) {
-      summary += `Review Comments:\n`;
-      item.discussions.forEach((d) => {
-        summary += `  - @${d.user || 'user'}: "${(d.body || '').substring(0, 150)}"\n`;
-      });
-    }
-    return summary;
-  });
-
-  const fullText = cleanItems.join('\n---\n');
-
-  if (fullText.length > 3000) {
-    return fullText.substring(0, 3000) + '\n...[Context Truncated]';
-  }
-  return fullText;
-}
-
-/**
- * Generates an architectural explanation using Sarvam AI chat completions.
- * 
- * @param {string} question - Developer question
- * @param {Array<Object>} graphContext - Evidence context from Neo4j
- * @returns {Promise<string>} Markdown explanation with citations
- */
-export async function generateAnswerWithEvidence(question, graphContext) {
+export async function generateAnswerWithEvidence(question, evidence) {
   const apiKey = process.env.SARVAM_API_KEY;
+  const isConfigured = apiKey && apiKey !== 'your_sarvam_api_key';
 
-  const sanitizedContext = sanitizeGraphContext(graphContext);
-  const cleanQuestion = (question || '').trim() || 'Why was this code modified?';
+  const cleanQuestion = (question || '').trim();
 
-  const systemPrompt = "You are a software architecture expert.";
+  // Format evidence list for prompt context
+  let evidenceContext = '';
+  if (!evidence || evidence.length === 0) {
+    evidenceContext = 'No matching historical evidence (commits, PRs, issues, or review discussions) was found in the graph database for this query.';
+  } else {
+    evidenceContext = evidence
+      .map((item, idx) => `[Evidence #${idx + 1} - ${item.type.toUpperCase()}]\nTitle/Reason: ${item.reason}\nAuthor: ${item.author} | Date: ${item.date} | URL: ${item.url}`)
+      .join('\n\n');
+  }
 
-  const promptText = `Developer Question: "${cleanQuestion}"
+  const systemPrompt = `You are a Senior Software Architecture and Code Archaeology expert.
+Your job is to answer the developer's question about "Why the code is like this" strictly based on the provided Repository Evidence.
 
-Graph Evidence Context:
-${sanitizedContext}
+Rules:
+1. Base your explanation ONLY on the supplied Repository Evidence.
+2. Never invent, assume, or pretend unsupported facts are known.
+3. If the evidence is insufficient or missing, clearly state what is known from the evidence and what remains unknown.
+4. Format your answer with clean Markdown and include explicit citations to commit SHAs, PR numbers, and author names.`;
 
-Provide a concise, evidence-backed architectural answer explaining why the code is structured or modified this way, with Markdown formatting and explicit citations ([Commit SHA], [PR #Num]).`;
+  const userPrompt = `Developer Question: "${cleanQuestion}"
 
-  if (!apiKey || apiKey === 'your_sarvam_api_key') {
-    console.warn('[Sarvam Service] SARVAM_API_KEY is not configured or using default placeholder.');
-    return generateFallbackAnswer(cleanQuestion, graphContext);
+Repository Evidence Collected:
+${evidenceContext}
+
+Explain the likely rationale, intent, or decision behind this code structure based strictly on the evidence above.`;
+
+  if (!isConfigured) {
+    console.warn('[Sarvam Service] SARVAM_API_KEY is missing or default placeholder. Using direct evidence synthesis.');
+    return generateFallbackAnswer(cleanQuestion, evidence);
   }
 
   try {
-    console.log('[Sarvam Service] Sending clean request payload to Sarvam AI...');
+    console.log('[Sarvam Service] Querying Sarvam AI completions API (sarvam-2b)...');
 
     const payload = {
       model: 'sarvam-2b',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: promptText }
+        { role: 'user', content: userPrompt },
       ],
-      max_tokens: 500,
-      temperature: 0.2
+      max_tokens: 600,
+      temperature: 0.2,
     };
 
     const response = await axios.post(
@@ -92,65 +69,53 @@ Provide a concise, evidence-backed architectural answer explaining why the code 
       {
         headers: {
           'Content-Type': 'application/json',
-          'api-subscription-key': apiKey
+          'api-subscription-key': apiKey,
         },
-        timeout: 25000
+        timeout: 25000,
       }
     );
 
     const answer = response.data?.choices?.[0]?.message?.content;
     if (!answer || typeof answer !== 'string') {
-      throw new Error('Sarvam API returned unexpected or empty response.');
+      throw new Error('Sarvam API returned an empty or invalid response format.');
     }
 
     console.log('[Sarvam Service] Sarvam AI answer generated successfully.');
     return answer;
   } catch (err) {
-    console.log("Sarvam API Response Payload Error:", JSON.stringify(err.response?.data));
-
-    return generateFallbackAnswer(cleanQuestion, graphContext, err.response?.data?.message || err.message);
+    console.error('[Sarvam Service] Sarvam API Error Response:', JSON.stringify(err.response?.data || err.message));
+    return generateFallbackAnswer(cleanQuestion, evidence, err.response?.data?.message || err.message);
   }
 }
 
 /**
- * Synthesizes graph evidence directly if Sarvam API call returns error or key is unconfigured.
+ * Fallback evidence synthesizer if Sarvam API key is unconfigured or request fails.
  */
-function generateFallbackAnswer(question, graphContext, errorDetail = null) {
-  let output = `### 🔍 Code Decision Synthesis & Evidence Analysis\n\n`;
-  if (errorDetail) {
-    output += `> ⚠️ *Note: Sarvam AI API request notice (${errorDetail}). Synthesizing GraphRAG evidence directly below:*\n\n`;
+function generateFallbackAnswer(question, evidence, errorNotice = null) {
+  let output = `### 🔍 Code Archaeology & Rationale Analysis\n\n`;
+
+  if (errorNotice) {
+    output += `> ⚠️ *Note: Sarvam AI API request returned a notice (${errorNotice}). Synthesizing Graph Evidence directly below:*\n\n`;
   } else {
-    output += `> 💡 *Note: Operating in local GraphRAG synthesis mode.*\n\n`;
+    output += `> 💡 *Note: Operating in direct evidence synthesis mode (SARVAM_API_KEY placeholder detected).*\n\n`;
   }
 
   output += `**Question:** "${question}"\n\n`;
 
-  if (!graphContext || graphContext.length === 0) {
-    output += `No matching decision graph evidence was found for this query in Neo4j.\n`;
+  if (!evidence || evidence.length === 0) {
+    output += `No relevant repository evidence (commits, PRs, issues, or review comments) was found in the graph database matching this question. Please ensure the repository has been ingested.\n`;
     return output;
   }
 
-  output += `#### 📜 Graph Evidence Summary:\n\n`;
+  output += `#### 📜 Retrieved Historical Evidence:\n\n`;
 
-  graphContext.forEach((item, index) => {
-    if (item.codeEntity) {
-      output += `##### ${index + 1}. Code Entity: \`${item.codeEntity}\`\n`;
-    }
-    if (item.commit) {
-      const shaShort = item.commit.sha ? item.commit.sha.substring(0, 7) : 'N/A';
-      output += `- **Commit**: [\`${shaShort}\`] - *${item.commit.message}* (by **${item.commit.author}** on ${item.commit.date || 'N/A'})\n`;
-    }
-    if (item.pullRequest) {
-      output += `- **Pull Request #${item.pullRequest.number}**: "${item.pullRequest.title}" (Merged: ${item.pullRequest.merged_at || 'N/A'})\n`;
-      if (item.pullRequest.body) {
-        output += `  > PR Body: ${item.pullRequest.body.substring(0, 150)}...\n`;
-      }
-    }
-    if (item.discussions && item.discussions.length > 0) {
-      output += `- **Review Discussions**:\n`;
-      item.discussions.forEach((d) => {
-        output += `  - **${d.user}** (${d.type}): "${d.body.substring(0, 150)}..."\n`;
-      });
+  evidence.forEach((item, idx) => {
+    output += `##### ${idx + 1}. [${item.type.toUpperCase()}] ${item.title}\n`;
+    output += `- **Author**: @${item.author}\n`;
+    output += `- **Date/State**: ${item.date}\n`;
+    output += `- **Evidence Details**: ${item.reason}\n`;
+    if (item.url && item.url !== '#') {
+      output += `- **Link**: [View on GitHub](${item.url})\n`;
     }
     output += `\n`;
   });

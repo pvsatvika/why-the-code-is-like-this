@@ -1,81 +1,125 @@
 import express from 'express';
 import { fetchRepoData } from '../services/githubService.js';
-import { buildDecisionGraph, querySubgraph } from '../services/graphService.js';
+import { buildDecisionGraph, querySubgraph, verifyConnection } from '../services/graphService.js';
 import { generateAnswerWithEvidence } from '../services/sarvamService.js';
 
 const router = express.Router();
 
 /**
+ * GET /api/health
+ * Reports backend status and reachability of external services (GitHub token, Neo4j DB, Sarvam key).
+ */
+router.get('/health', async (req, res) => {
+  const githubConfigured = Boolean(process.env.GITHUB_TOKEN && process.env.GITHUB_TOKEN !== 'your_github_token');
+  const sarvamConfigured = Boolean(process.env.SARVAM_API_KEY && process.env.SARVAM_API_KEY !== 'your_sarvam_api_key');
+  const neo4jHealth = await verifyConnection();
+
+  const isFullyHealthy = neo4jHealth.connected;
+
+  res.status(isFullyHealthy ? 200 : 503).json({
+    status: isFullyHealthy ? 'ok' : 'degraded',
+    message: isFullyHealthy ? 'Server and Neo4j database are operational' : 'Neo4j connection unverified or unavailable',
+    services: {
+      github: { configured: githubConfigured },
+      neo4j: neo4jHealth,
+      sarvam: { configured: sarvamConfigured },
+    },
+  });
+});
+
+/**
  * POST /api/ingest
- * Dynamically ingests any target public GitHub repository (owner, repo).
+ * Ingests repository history from GitHub and constructs Neo4j Decision Graph.
+ * Input body: { repository: "owner/repo" } or { owner: "...", repo: "..." }
  */
 router.post('/ingest', async (req, res) => {
-  const { owner, repo } = req.body;
+  let { repository, owner, repo } = req.body;
+
+  if (repository && typeof repository === 'string' && repository.includes('/')) {
+    const parts = repository.split('/');
+    owner = parts[0].trim();
+    repo = parts[1].trim();
+  }
 
   if (!owner || !repo) {
     return res.status(400).json({
       status: 'error',
-      message: "Please specify both 'owner' and 'repo' in request body.",
+      errorType: 'INVALID_INPUT',
+      message: "Please specify a valid repository in format 'owner/repository' or provide both 'owner' and 'repo'.",
     });
   }
 
   try {
-    console.log(`[API Route] Triggering fast multi-repo ingestion for: ${owner}/${repo}`);
+    console.log(`[API Route] Triggering repository ingestion for: ${owner}/${repo}`);
+
+    // Step 1: Fetch GitHub history
     const repoData = await fetchRepoData(owner, repo);
 
-    let graphStatus = 'built';
-    try {
-      await buildDecisionGraph(repoData);
-    } catch (graphErr) {
-      console.warn(`[API Route] Graph build warning for ${owner}/${repo}:`, graphErr.message);
-      graphStatus = `warning: ${graphErr.message}`;
-    }
+    // Step 2: Store decision graph in Neo4j
+    await buildDecisionGraph(repoData);
 
     return res.json({
       status: 'success',
-      graphStatus,
-      data: repoData,
+      message: `Repository ${owner}/${repo} successfully ingested into Neo4j decision graph.`,
+      repository: `${owner}/${repo}`,
+      stats: {
+        commits: repoData.commits?.length || 0,
+        pullRequests: repoData.pullRequests?.length || 0,
+        issues: repoData.issues?.length || 0,
+      },
     });
   } catch (error) {
     const statusCode = error.status || 500;
-    console.error(`[API Route] Ingestion error for ${owner}/${repo}:`, error.message);
+    console.error(`[API Route] Ingestion error [${statusCode}]:`, error.message);
+
+    let errorType = 'INGESTION_FAILED';
+    if (statusCode === 404) errorType = 'REPO_NOT_FOUND';
+    else if (statusCode === 401) errorType = 'GITHUB_UNAUTHORIZED';
+    else if (statusCode === 403) errorType = 'GITHUB_RATE_LIMIT';
+
     return res.status(statusCode).json({
       status: 'error',
-      message: error.message || 'Failed to ingest repository.',
+      errorType,
+      message: error.message || 'Failed to ingest repository history.',
     });
   }
 });
 
 /**
  * POST /api/query
- * Queries the decision graph & Sarvam AI for evidence-backed answers.
+ * Executes GraphRAG query: fetches evidence from Neo4j and synthesizes explanation via Sarvam.
+ * Input body: { question: string, repository?: string }
  */
 router.post('/query', async (req, res) => {
-  const { question, keyword } = req.body;
+  const { question } = req.body;
 
-  if (!question) {
+  if (!question || typeof question !== 'string' || !question.trim()) {
     return res.status(400).json({
       status: 'error',
-      message: "Please provide a 'question' in the request body.",
+      errorType: 'INVALID_INPUT',
+      message: "Please provide a valid non-empty 'question' string.",
     });
   }
 
-  const searchKeyword = keyword || question.split(' ').filter((w) => w.length > 3)[0] || question;
-
   try {
-    const graphContext = await querySubgraph(searchKeyword);
-    const answer = await generateAnswerWithEvidence(question, graphContext);
+    console.log(`[API Route] Processing query: "${question}"`);
+
+    // Step 1: Retrieve evidence from Neo4j
+    const evidence = await querySubgraph(question);
+
+    // Step 2: Generate answer with Sarvam AI
+    const answer = await generateAnswerWithEvidence(question, evidence);
 
     return res.json({
-      status: 'success',
       answer,
-      evidence: graphContext,
+      evidence,
     });
   } catch (error) {
-    console.error(`[API Route] Query processing error:`, error.message);
+    console.error(`[API Route] Query error:`, error.message);
     return res.status(500).json({
       status: 'error',
-      message: error.message || 'Failed to execute query.',
+      errorType: 'QUERY_FAILED',
+      message: error.message || 'Failed to process GraphRAG query.',
     });
   }
 });
