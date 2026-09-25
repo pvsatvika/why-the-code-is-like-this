@@ -1,15 +1,14 @@
-import React, { useState } from 'react';
-import { Database, ExternalLink, Lightbulb, GitPullRequest, GitCommit, HelpCircle, MessageSquare, AlertTriangle, Filter } from 'lucide-react';
+import React from 'react';
+import { Database, ExternalLink, Lightbulb, GitPullRequest, GitCommit, HelpCircle, MessageSquare, AlertTriangle, Filter, ShieldCheck } from 'lucide-react';
 
-export default function EvidencePanel({ evidence = [] }) {
-  const [activeFilter, setActiveFilter] = useState('all');
-
+export default function EvidencePanel({ evidence = [], activeFilter = 'all', setActiveFilter }) {
   if (!evidence) return null;
 
-  // Filter types available
+  // Build filter list with actual counts
   const filterTypes = [
     { key: 'all', label: 'All Evidence', count: evidence.length },
     { key: 'decision', label: 'Decisions', count: evidence.filter(e => e.type === 'decision').length },
+    { key: 'incident', label: 'Incidents', count: evidence.filter(e => e.type === 'incident').length },
     { key: 'pull_request', label: 'PRs', count: evidence.filter(e => e.type === 'pull_request').length },
     { key: 'commit', label: 'Commits', count: evidence.filter(e => e.type === 'commit').length },
     { key: 'discussion', label: 'Discussions', count: evidence.filter(e => e.type === 'discussion').length },
@@ -52,17 +51,19 @@ export default function EvidencePanel({ evidence = [] }) {
   };
 
   return (
-    <div className="glass-panel rounded-2xl p-6 glow-accent space-y-5">
+    <div className="glass-panel rounded-2xl p-6 md:p-8 glow-accent space-y-5">
       
       {/* HEADER & FILTERS */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div>
-          <h3 className="text-base font-bold text-white font-mono flex items-center gap-2">
-            <Database className="w-5 h-5 text-cyan-400" />
-            Retrieved Neo4j Graph Evidence
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Empirical historical artifacts retrieved from Neo4j Cypher queries.
+          <div className="flex items-center gap-2.5">
+            <ShieldCheck className="w-5 h-5 text-indigo-400" />
+            <h3 className="text-base font-bold text-white font-mono">
+              Why should I trust this explanation?
+            </h3>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5 font-sans">
+            Empirical historical evidence retrieved directly from Neo4j Cypher graph queries.
           </p>
         </div>
 
@@ -73,10 +74,10 @@ export default function EvidencePanel({ evidence = [] }) {
             ft.count > 0 || ft.key === 'all' ? (
               <button
                 key={ft.key}
-                onClick={() => setActiveFilter(ft.key)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-mono transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                onClick={() => setActiveFilter && setActiveFilter(ft.key)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-mono transition-all flex items-center gap-1.5 whitespace-nowrap ${
                   activeFilter === ft.key
-                    ? 'bg-indigo-600 text-white font-semibold shadow'
+                    ? 'bg-indigo-600 text-white font-bold shadow'
                     : 'bg-slate-900/80 text-slate-400 border border-slate-800 hover:text-slate-200'
                 }`}
               >
@@ -92,61 +93,66 @@ export default function EvidencePanel({ evidence = [] }) {
         </div>
       </div>
 
-      {/* EMPTY FILTER STATE */}
+      {/* EVIDENCE CARDS GRID */}
       {filteredEvidence.length === 0 ? (
         <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-8 text-center text-slate-400 text-xs font-mono">
-          No evidence records match the selected filter category '{activeFilter}'.
+          No evidence records match filter '{activeFilter}'.
         </div>
       ) : (
-        /* EVIDENCE GRID */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredEvidence.map((item, idx) => (
-            <div
-              key={idx}
-              className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-4 space-y-3 glass-panel-hover flex flex-col justify-between"
-            >
-              <div className="space-y-2">
-                {/* CARD TOP BAR */}
-                <div className="flex items-center justify-between gap-2">
-                  <span className={`px-2.5 py-0.5 rounded-md border text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 ${getBadgeStyle(item.type)}`}>
-                    {getTypeIcon(item.type)}
-                    {item.type}
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    @{item.author || 'Unknown'}
-                  </span>
+          {filteredEvidence.map((item, idx) => {
+            const hasUrl = item.url && item.url !== '#' && item.url.startsWith('http');
+
+            return (
+              <div
+                key={idx}
+                className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-4 space-y-3 glass-panel-hover flex flex-col justify-between"
+              >
+                <div className="space-y-2">
+                  {/* CARD HEADER */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`px-2.5 py-0.5 rounded-md border text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 ${getBadgeStyle(item.type)}`}>
+                      {getTypeIcon(item.type)}
+                      {item.type}
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      @{item.author || 'contributor'}
+                    </span>
+                  </div>
+
+                  {/* TITLE */}
+                  <h4 className="font-bold text-slate-100 text-sm leading-snug line-clamp-2">
+                    {item.title}
+                  </h4>
+
+                  {/* REASON / QUOTE */}
+                  {item.reason && (
+                    <p className="text-xs text-slate-300 italic bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80 line-clamp-3 font-sans">
+                      "{item.reason}"
+                    </p>
+                  )}
                 </div>
 
-                {/* TITLE */}
-                <h4 className="font-bold text-slate-100 text-sm leading-snug line-clamp-2">
-                  {item.title}
-                </h4>
-
-                {/* REASON / QUOTE */}
-                {item.reason && (
-                  <p className="text-xs text-slate-300 italic bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80 line-clamp-3 font-sans">
-                    "{item.reason}"
-                  </p>
-                )}
+                {/* CARD FOOTER */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono pt-3 border-t border-slate-900">
+                  <span>Date: {item.date || 'Historical Record'}</span>
+                  {hasUrl ? (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 transition"
+                    >
+                      <span>VIEW ON GITHUB</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : (
+                    <span className="text-slate-600 text-[10px]">Graph Record</span>
+                  )}
+                </div>
               </div>
-
-              {/* CARD FOOTER */}
-              <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono pt-3 border-t border-slate-900">
-                <span>Date: {item.date || 'N/A'}</span>
-                {item.url && item.url !== '#' && (
-                  <a
-                    href={item.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 transition"
-                  >
-                    <span>View on GitHub</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

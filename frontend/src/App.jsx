@@ -8,11 +8,12 @@ import QuestionPanel from './components/QuestionPanel';
 import AnswerPanel from './components/AnswerPanel';
 import DecisionChain from './components/DecisionChain';
 import EvidencePanel from './components/EvidencePanel';
+import WhyThisAnswer from './components/WhyThisAnswer';
 import HistoryTimeline from './components/HistoryTimeline';
 import EmptyState from './components/EmptyState';
 
 export default function App() {
-  // Health & Service Check State
+  // Backend & Service Health State
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(true);
   const [backendUnavailable, setBackendUnavailable] = useState(false);
@@ -30,7 +31,10 @@ export default function App() {
   const [queryResult, setQueryResult] = useState(null);
   const [queryError, setQueryError] = useState(null);
 
-  // Health Check on Initial Mount via Vite proxy (/api/health)
+  // Interactive Evidence Filter State
+  const [evidenceFilter, setEvidenceFilter] = useState('all');
+
+  // Check Health on Mount via Vite Proxy (/api/health)
   useEffect(() => {
     checkHealth();
   }, []);
@@ -50,7 +54,7 @@ export default function App() {
     }
   };
 
-  // Handle Ingestion (POST /api/ingest)
+  // Handle Repository Ingestion (POST /api/ingest)
   const handleIngest = async (e) => {
     e?.preventDefault();
     if (!repository.trim()) return;
@@ -71,15 +75,15 @@ export default function App() {
       const data = err.response?.data;
 
       if (!err.response) {
-        setIngestError('Backend server unavailable. Please verify Node server connection.');
+        setIngestError('Backend server unavailable. Please check Node backend server connection.');
       } else if (status === 404 || data?.errorType === 'REPO_NOT_FOUND') {
         setIngestError(`Repository '${repository}' was not found on GitHub or is private.`);
       } else if (status === 401 || data?.errorType === 'GITHUB_UNAUTHORIZED') {
-        setIngestError('GitHub API authentication failed. Check GITHUB_TOKEN in backend environment.');
+        setIngestError('GitHub API authentication failed. Check GITHUB_TOKEN in .env file.');
       } else if (status === 403 || data?.errorType === 'GITHUB_RATE_LIMIT') {
-        setIngestError('GitHub API rate limit reached. Ensure a valid GITHUB_TOKEN is set.');
+        setIngestError('GitHub API rate limit reached. Ensure GITHUB_TOKEN is configured in backend.');
       } else {
-        setIngestError(data?.message || err.message || 'GitHub ingestion failed.');
+        setIngestError(data?.message || err.message || 'GitHub repository ingestion failed.');
       }
     } finally {
       setIngestLoading(false);
@@ -94,6 +98,7 @@ export default function App() {
     setQueryLoading(true);
     setQueryError(null);
     setQueryResult(null);
+    setEvidenceFilter('all');
 
     try {
       const res = await axios.post('/api/query', { question: question.trim() });
@@ -113,17 +118,17 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#090d16] bg-grid-pattern text-slate-100 font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
       
-      {/* HEADER COMPONENT */}
+      {/* HEADER BAR */}
       <Header
         health={health}
         healthLoading={healthLoading}
         backendUnavailable={backendUnavailable}
       />
 
-      {/* MAIN CONTENT CONTAINER */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      {/* MAIN DEMO WORKSPACE CONTAINER */}
+      <main className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-8 space-y-8">
         
-        {/* REPOSITORY INGESTION CARD */}
+        {/* SECTION 1: REPOSITORY INGESTION CARD */}
         <RepositoryInput
           repository={repository}
           setRepository={setRepository}
@@ -134,7 +139,7 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* ACTIVE WORKSPACE BANNER */}
+        {/* WORKSPACE REPO METRICS BANNER */}
         {ingestSuccess && (
           <WorkspaceHeader
             repository={ingestSuccess.repository || repository}
@@ -142,7 +147,7 @@ export default function App() {
           />
         )}
 
-        {/* QUESTION PANEL */}
+        {/* SECTION 2: ASK WHY CORE WORKSPACE */}
         <QuestionPanel
           question={question}
           setQuestion={setQuestion}
@@ -152,26 +157,38 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* QUERY RESULT / EXPLANATION DISPLAY */}
+        {/* SECTION 3: ANSWER & EVIDENCE RESULTS */}
         {queryResult ? (
           <div className="space-y-8 animate-fadeIn">
-            {/* 1. SARVAM AI EXPLANATION */}
+            {/* 1. WHY ANSWER EXPLANATION */}
             <AnswerPanel queryResult={queryResult} />
 
-            {/* 2. VISUAL DECISION REASONING CHAIN */}
+            {/* 2. DYNAMIC DECISION CHAIN */}
             <DecisionChain
               question={question}
               evidence={queryResult.evidence}
+              selectedType={evidenceFilter}
+              onSelectType={(type) => setEvidenceFilter(type)}
             />
 
             {/* 3. RETRIEVED GRAPH EVIDENCE CARDS */}
-            <EvidencePanel evidence={queryResult.evidence} />
+            <EvidencePanel
+              evidence={queryResult.evidence}
+              activeFilter={evidenceFilter}
+              setActiveFilter={(type) => setEvidenceFilter(type)}
+            />
 
-            {/* 4. CHRONOLOGICAL DECISION TIMELINE */}
+            {/* 4. WHY THIS ANSWER ARCHITECTURE PIPELINE */}
+            <WhyThisAnswer
+              evidenceCount={queryResult.evidence?.length || 0}
+              confidence={queryResult.confidence}
+            />
+
+            {/* 5. CHRONOLOGICAL DECISION TIMELINE */}
             <HistoryTimeline evidence={queryResult.evidence} />
           </div>
         ) : (
-          /* EMPTY STATE GUIDANCE BEFORE FIRST QUERY */
+          /* FIRST 10 SECONDS LANDING STATE GUIDANCE */
           <EmptyState onSelectPreset={(repo) => {
             setRepository(repo);
           }} />
