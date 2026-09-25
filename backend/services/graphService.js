@@ -45,15 +45,15 @@ function safeValue(val, defaultVal = '') {
 }
 
 /**
- * Extracts Decision text signals from commit messages, PR descriptions, or comments.
+ * Extracts Decision text signals with provenance.
  */
-function extractDecisionSignal(text, sourceType, sourceId, author, date) {
+function extractDecisionSignal(text, sourceType, sourceId, sourceUrl, author, date) {
   if (!text || typeof text !== 'string') return null;
 
-  const decisionRegex = /\b(because|reason|chose|decided|instead|due to|workaround|breaking change|migration|deprecated|performance|compatibility|security)\b/i;
+  const decisionRegex = /\b(because|reason|chose|decided|instead|due to|workaround|breaking change|migration|deprecated|performance|compatibility|security|refactor|update|redesign|implement|support)\b/i;
   if (!decisionRegex.test(text)) return null;
 
-  const cleanText = text.trim().substring(0, 250);
+  const cleanText = text.trim().substring(0, 300);
   const hash = Math.abs(cleanText.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
   
   return {
@@ -61,21 +61,23 @@ function extractDecisionSignal(text, sourceType, sourceId, author, date) {
     text: cleanText,
     sourceType,
     sourceId: String(sourceId),
+    sourceUrl: sourceUrl || '#',
     author: author || 'Unknown',
     date: date || '',
+    confidence: 'supported',
   };
 }
 
 /**
- * Extracts Incident text signals from issue bodies, PR titles, or commit messages.
+ * Extracts Incident text signals with provenance.
  */
-function extractIncidentSignal(text, sourceType, sourceId, author, date) {
+function extractIncidentSignal(text, sourceType, sourceId, sourceUrl, author, date) {
   if (!text || typeof text !== 'string') return null;
 
-  const incidentRegex = /\b(bug|fix|regression|crash|vulnerability|failure|panic|memory leak|outage|issue)\b/i;
+  const incidentRegex = /\b(bug|fix|regression|crash|vulnerability|failure|panic|memory leak|outage|issue|error|prevent|solve)\b/i;
   if (!incidentRegex.test(text)) return null;
 
-  const cleanText = text.trim().substring(0, 250);
+  const cleanText = text.trim().substring(0, 300);
   const hash = Math.abs(cleanText.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0));
 
   return {
@@ -83,29 +85,64 @@ function extractIncidentSignal(text, sourceType, sourceId, author, date) {
     text: cleanText,
     sourceType,
     sourceId: String(sourceId),
+    sourceUrl: sourceUrl || '#',
     author: author || 'Unknown',
     date: date || '',
+    confidence: 'supported',
   };
 }
 
 /**
- * Stores repository history into Neo4j with full graph relationships:
- * Repository, Commit, PullRequest, Issue, Developer, File, Discussion, Decision, Incident
- * 
- * @param {Object} repoData - Output from githubService.fetchRepoData
+ * Clears old graph nodes specifically for the target repository to enable clean re-ingestion.
+ */
+export async function clearRepositoryGraph(owner, repo) {
+  const d = getDriver();
+  const session = d.session();
+  const repoId = `${owner}/${repo}`;
+  try {
+    console.log(`[Neo4j Service] Clearing previous graph data for ${repoId}...`);
+    await session.executeWrite((tx) =>
+      tx.run(
+        `
+        MATCH (r:Repository { id: $repoId })
+        OPTIONAL MATCH (r)-[:HAS_COMMIT]->(c:Commit)
+        OPTIONAL MATCH (r)-[:HAS_PULL_REQUEST]->(pr:PullRequest)
+        OPTIONAL MATCH (r)-[:HAS_ISSUE]->(i:Issue)
+        OPTIONAL MATCH (c)-[:SUPPORTS]->(dec1:Decision)
+        OPTIONAL MATCH (pr)-[:IMPLEMENTS]->(dec2:Decision)
+        OPTIONAL MATCH (i)-[:DESCRIBES]->(inc:Incident)
+        OPTIONAL MATCH (pr)-[:HAS_DISCUSSION]->(d:Discussion)
+        DETACH DELETE r, c, pr, i, dec1, dec2, inc, d
+        `,
+        { repoId }
+      )
+    );
+  } catch (err) {
+    console.warn(`[Neo4j Service] Repository clear warning:`, err.message);
+  } finally {
+    await session.close();
+  }
+}
+
+/**
+ * Builds Phase 3.5 Decision Graph in Neo4j with complete node & relationship connectivity.
+ * Nodes: Repository, Commit, PullRequest, Issue, Developer, File, CodeEntity, Discussion, Decision, Incident
  */
 export async function buildDecisionGraph(repoData) {
   const { metadata, commits = [], pullRequests = [], issues = [] } = repoData;
   const { owner, repo, url: repoUrl } = metadata;
   const repoId = `${owner}/${repo}`;
 
-  console.log(`[Neo4j Service] Building Phase 3 decision graph for ${repoId}...`);
+  console.log(`[Neo4j Service] Constructing connected Decision Graph for ${repoId}...`);
+
+  // Clear target repository graph first for idempotent re-ingestion
+  await clearRepositoryGraph(owner, repo);
 
   const d = getDriver();
   const session = d.session();
 
   try {
-    // 1. Create Repository Node
+    // 1. Repository Node
     await session.executeWrite((tx) =>
       tx.run(
         `
@@ -139,7 +176,7 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Create Canonical File Nodes and (Commit)-[:MODIFIES]->(File)
+      // Create Canonical File & CodeEntity Nodes
       for (const file of files) {
         const fileId = `${repoId}/${file.filename}`;
         await session.executeWrite((tx) =>
@@ -147,7 +184,8 @@ export async function buildDecisionGraph(repoData) {
             `
             MATCH (c:Commit { sha: $sha })
             MERGE (f:File { id: $fileId })
-            SET f.filename = $filename
+            SET f:CodeEntity,
+                f.filename = $filename
             MERGE (c)-[:MODIFIES]->(f)
             `,
             { sha, fileId, filename: file.filename }
@@ -155,8 +193,8 @@ export async function buildDecisionGraph(repoData) {
         );
       }
 
-      // Check Commit Message for Decision or Incident Signals
-      const decSignal = extractDecisionSignal(message, 'commit', sha, author, date);
+      // Commit Decision Signal
+      const decSignal = extractDecisionSignal(message, 'commit', sha, commitUrl, author, date);
       if (decSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -165,17 +203,35 @@ export async function buildDecisionGraph(repoData) {
             MERGE (dec:Decision { id: $id })
             SET dec.text = $text,
                 dec.sourceType = $sourceType,
+                dec.sourceId = $sourceId,
+                dec.sourceUrl = $sourceUrl,
                 dec.author = $author,
-                dec.date = $date
+                dec.date = $date,
+                dec.confidence = $confidence
             MERGE (c)-[:SUPPORTS]->(dec)
             MERGE (dec)-[:IMPLEMENTED_BY]->(c)
             `,
             { sha, ...decSignal }
           )
         );
+
+        for (const file of files) {
+          const fileId = `${repoId}/${file.filename}`;
+          await session.executeWrite((tx) =>
+            tx.run(
+              `
+              MATCH (dec:Decision { id: $id })
+              MATCH (f:File { id: $fileId })
+              MERGE (dec)-[:AFFECTS]->(f)
+              `,
+              { id: decSignal.id, fileId }
+            )
+          );
+        }
       }
 
-      const incSignal = extractIncidentSignal(message, 'commit', sha, author, date);
+      // Commit Incident Signal
+      const incSignal = extractIncidentSignal(message, 'commit', sha, commitUrl, author, date);
       if (incSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -184,8 +240,12 @@ export async function buildDecisionGraph(repoData) {
             MERGE (inc:Incident { id: $id })
             SET inc.text = $text,
                 inc.sourceType = $sourceType,
+                inc.sourceId = $sourceId,
+                inc.sourceUrl = $sourceUrl,
                 inc.author = $author,
-                inc.date = $date
+                inc.date = $date,
+                inc.confidence = $confidence
+            MERGE (c)-[:ADDRESSES]->(inc)
             MERGE (inc)-[:ADDRESSED_BY]->(c)
             `,
             { sha, ...incSignal }
@@ -226,13 +286,13 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Link PR-associated commits reliably: (Commit)-[:RELATED_TO]->(PullRequest)
+      // Link PR-associated commits reliably: MERGE Commit node if it does not exist yet
       for (const prCommitSha of pr.pr_commits || []) {
         await session.executeWrite((tx) =>
           tx.run(
             `
             MATCH (pr:PullRequest { id: $prId })
-            MATCH (c:Commit { sha: $sha })
+            MERGE (c:Commit { sha: $sha })
             MERGE (c)-[:RELATED_TO]->(pr)
             `,
             { prId, sha: prCommitSha }
@@ -241,7 +301,7 @@ export async function buildDecisionGraph(repoData) {
       }
 
       // Check PR Title/Body for Decision Signals
-      const prDecSignal = extractDecisionSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.author, pr.merged_at);
+      const prDecSignal = extractDecisionSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at);
       if (prDecSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -250,12 +310,38 @@ export async function buildDecisionGraph(repoData) {
             MERGE (dec:Decision { id: $id })
             SET dec.text = $text,
                 dec.sourceType = $sourceType,
+                dec.sourceId = $sourceId,
+                dec.sourceUrl = $sourceUrl,
                 dec.author = $author,
-                dec.date = $date
+                dec.date = $date,
+                dec.confidence = $confidence
             MERGE (pr)-[:IMPLEMENTS]->(dec)
             MERGE (dec)-[:MADE_IN]->(pr)
             `,
             { prId, ...prDecSignal }
+          )
+        );
+      }
+
+      // Check PR for Incident Signal
+      const prIncSignal = extractIncidentSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at);
+      if (prIncSignal) {
+        await session.executeWrite((tx) =>
+          tx.run(
+            `
+            MATCH (pr:PullRequest { id: $prId })
+            MERGE (inc:Incident { id: $id })
+            SET inc.text = $text,
+                inc.sourceType = $sourceType,
+                inc.sourceId = $sourceId,
+                inc.sourceUrl = $sourceUrl,
+                inc.author = $author,
+                inc.date = $date,
+                inc.confidence = $confidence
+            MERGE (pr)-[:ADDRESSES]->(inc)
+            MERGE (inc)-[:ADDRESSED_BY]->(pr)
+            `,
+            { prId, ...prIncSignal }
           )
         );
       }
@@ -296,7 +382,8 @@ export async function buildDecisionGraph(repoData) {
               MATCH (pr:PullRequest { id: $prId })
               MATCH (d:Discussion { id: $commentId })
               MERGE (f:File { id: $fileId })
-              SET f.filename = $path
+              SET f:CodeEntity,
+                  f.filename = $path
               MERGE (pr)-[:DISCUSSES]->(f)
               MERGE (d)-[:ABOUT]->(f)
               `,
@@ -306,7 +393,7 @@ export async function buildDecisionGraph(repoData) {
         }
 
         // Discussion Decision Signal
-        const discDecSignal = extractDecisionSignal(comment.body, 'discussion', comment.id, comment.user, comment.date);
+        const discDecSignal = extractDecisionSignal(comment.body, 'discussion', comment.id, pr.url, comment.user, comment.date);
         if (discDecSignal) {
           await session.executeWrite((tx) =>
             tx.run(
@@ -315,8 +402,11 @@ export async function buildDecisionGraph(repoData) {
               MERGE (dec:Decision { id: $id })
               SET dec.text = $text,
                   dec.sourceType = $sourceType,
+                  dec.sourceId = $sourceId,
+                  dec.sourceUrl = $sourceUrl,
                   dec.author = $author,
-                  dec.date = $date
+                  dec.date = $date,
+                  dec.confidence = $confidence
               MERGE (d)-[:SUPPORTS]->(dec)
               MERGE (dec)-[:SUPPORTED_BY]->(d)
               `,
@@ -375,7 +465,7 @@ export async function buildDecisionGraph(repoData) {
       );
 
       // Create Incident node if Issue describes bug/incident
-      const issueIncSignal = extractIncidentSignal(`${issue.title}\n${issue.body}`, 'issue', issue.number, issue.author, issue.created_at);
+      const issueIncSignal = extractIncidentSignal(`${issue.title}\n${issue.body}`, 'issue', issue.number, issue.url, issue.author, issue.created_at);
       if (issueIncSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -384,8 +474,11 @@ export async function buildDecisionGraph(repoData) {
             MERGE (inc:Incident { id: $id })
             SET inc.text = $text,
                 inc.sourceType = $sourceType,
+                inc.sourceId = $sourceId,
+                inc.sourceUrl = $sourceUrl,
                 inc.author = $author,
-                inc.date = $date
+                inc.date = $date,
+                inc.confidence = $confidence
             MERGE (i)-[:DESCRIBES]->(inc)
             `,
             { issueId, ...issueIncSignal }
@@ -394,7 +487,7 @@ export async function buildDecisionGraph(repoData) {
       }
     }
 
-    console.log(`[Neo4j Service] Phase 3 decision graph constructed successfully for ${repoId}.`);
+    console.log(`[Neo4j Service] Decision Graph built successfully for ${repoId}.`);
     return { success: true, repository: repoId };
   } catch (err) {
     console.error(`[Neo4j Service] Decision graph build error:`, err.message);
@@ -405,9 +498,7 @@ export async function buildDecisionGraph(repoData) {
 }
 
 /**
- * Multi-hop GraphRAG Search Engine:
- * Identifies entities, traverses connected graph neighborhood (File -> Commit -> PR -> Discussion -> Decision -> Incident),
- * ranks evidence, and returns structured evidence context.
+ * Multi-hop GraphRAG Search Engine with Evidence Ranking & Relationship Traversal.
  * 
  * @param {string} question - Natural language developer question
  * @returns {Promise<{ evidence: Array<Object>, structuredContext: Object }>}
@@ -417,7 +508,6 @@ export async function querySubgraph(question) {
     return { evidence: [], structuredContext: {} };
   }
 
-  // Extract candidate keywords (> 3 chars)
   const words = question
     .toLowerCase()
     .replace(/[^\w\s-]/g, '')
@@ -425,28 +515,26 @@ export async function querySubgraph(question) {
     .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from', 'does', 'have', 'been'].includes(w));
 
   const keyword = words[0] || question.trim();
-  console.log(`[Neo4j Service] Multi-hop GraphRAG search for keyword: "${keyword}"...`);
+  console.log(`[Neo4j Service] Multi-hop GraphRAG query for keyword: "${keyword}"...`);
 
   const d = getDriver();
   const session = d.session();
 
   try {
     const cypher = `
-      // 1. Decisions & Incidents matching keyword
+      // 1. Decisions matching keyword
       MATCH (dec:Decision)
       WHERE toLower(dec.text) CONTAINS toLower($keyword)
       OPTIONAL MATCH (dec)-[:MADE_IN]->(pr:PullRequest)
       OPTIONAL MATCH (dec)-[:IMPLEMENTED_BY]->(c:Commit)
-      OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
       RETURN 'decision' AS type,
              dec.id AS id,
-             ('Decision: ' + dec.text) AS title,
+             ('Architectural Decision: ' + dec.text) AS title,
              dec.author AS author,
              dec.date AS date,
-             coalesce(pr.url, c.url, '#') AS url,
-             ('Architectural Decision: ' + dec.text + ' (Source: ' + dec.sourceType + ')') AS reason,
+             coalesce(dec.sourceUrl, pr.url, c.url, '#') AS url,
+             ('Decision (' + dec.sourceType + '): ' + dec.text) AS reason,
              1 AS rank
-      LIMIT 10
 
       UNION
 
@@ -454,19 +542,19 @@ export async function querySubgraph(question) {
       MATCH (inc:Incident)
       WHERE toLower(inc.text) CONTAINS toLower($keyword)
       OPTIONAL MATCH (i:Issue)-[:DESCRIBES]->(inc)
+      OPTIONAL MATCH (inc)-[:ADDRESSED_BY]->(c:Commit)
       RETURN 'incident' AS type,
              inc.id AS id,
-             ('Incident: ' + inc.text) AS title,
+             ('Incident / Problem: ' + inc.text) AS title,
              inc.author AS author,
              inc.date AS date,
-             coalesce(i.url, '#') AS url,
-             ('Reported Incident/Problem: ' + inc.text) AS reason,
+             coalesce(inc.sourceUrl, i.url, c.url, '#') AS url,
+             ('Incident (' + inc.sourceType + '): ' + inc.text) AS reason,
              2 AS rank
-      LIMIT 10
 
       UNION
 
-      // 3. Pull Requests & Discussions matching keyword or connected file
+      // 3. Pull Requests matching keyword or connected file
       MATCH (pr:PullRequest)
       WHERE toLower(pr.title) CONTAINS toLower($keyword)
          OR toLower(pr.body) CONTAINS toLower($keyword)
@@ -483,7 +571,6 @@ export async function querySubgraph(question) {
              pr.url AS url,
              ('Pull Request #' + toString(pr.number) + ': ' + pr.title + ' - ' + substring(pr.body, 0, 180)) AS reason,
              3 AS rank
-      LIMIT 10
 
       UNION
 
@@ -500,7 +587,6 @@ export async function querySubgraph(question) {
              i.url AS url,
              ('Issue #' + toString(i.number) + ' (' + i.state + '): ' + i.title + ' - ' + substring(i.body, 0, 180)) AS reason,
              4 AS rank
-      LIMIT 10
 
       UNION
 
@@ -520,7 +606,6 @@ export async function querySubgraph(question) {
              c.url AS url,
              ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS reason,
              5 AS rank
-      LIMIT 10
 
       UNION
 
@@ -536,7 +621,6 @@ export async function querySubgraph(question) {
              coalesce(pr.url, '#') AS url,
              ('Review Comment by @' + d.user + ': ' + substring(d.body, 0, 200)) AS reason,
              6 AS rank
-      LIMIT 10
     `;
 
     const result = await session.executeRead((tx) => tx.run(cypher, { keyword }));
