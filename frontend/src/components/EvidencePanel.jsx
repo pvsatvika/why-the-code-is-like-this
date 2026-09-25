@@ -1,12 +1,12 @@
-import React from 'react';
-import { Database, ExternalLink, Lightbulb, GitPullRequest, GitCommit, HelpCircle, MessageSquare, AlertTriangle, Filter, ShieldCheck } from 'lucide-react';
+import React, { useState } from 'react';
 
 export default function EvidencePanel({ evidence = [], activeFilter = 'all', setActiveFilter }) {
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState(null);
+
   if (!evidence) return null;
 
-  // Build filter list with actual counts
   const filterTypes = [
-    { key: 'all', label: 'All Evidence', count: evidence.length },
+    { key: 'all', label: 'All', count: evidence.length },
     { key: 'decision', label: 'Decisions', count: evidence.filter(e => e.type === 'decision').length },
     { key: 'incident', label: 'Incidents', count: evidence.filter(e => e.type === 'incident').length },
     { key: 'pull_request', label: 'PRs', count: evidence.filter(e => e.type === 'pull_request').length },
@@ -17,138 +17,105 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
 
   const filteredEvidence = activeFilter === 'all'
     ? evidence
+    : activeFilter === 'code_entity'
+    ? evidence.filter(e => e.type === 'file' || e.type === 'code_entity')
     : evidence.filter(item => item.type === activeFilter);
 
-  const getBadgeStyle = (type) => {
-    switch (type) {
-      case 'decision':
-        return 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60';
-      case 'incident':
-        return 'bg-rose-950/80 text-rose-300 border-rose-700/60';
-      case 'pull_request':
-        return 'bg-indigo-950/80 text-indigo-300 border-indigo-700/60';
-      case 'commit':
-        return 'bg-cyan-950/80 text-cyan-300 border-cyan-700/60';
-      case 'issue':
-        return 'bg-amber-950/80 text-amber-300 border-amber-700/60';
-      case 'discussion':
-        return 'bg-purple-950/80 text-purple-300 border-purple-700/60';
-      default:
-        return 'bg-slate-900 text-slate-300 border-slate-700';
-    }
-  };
-
-  const getTypeIcon = (type) => {
-    switch (type) {
-      case 'decision': return <Lightbulb className="w-3.5 h-3.5 text-emerald-400" />;
-      case 'incident': return <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />;
-      case 'pull_request': return <GitPullRequest className="w-3.5 h-3.5 text-indigo-400" />;
-      case 'commit': return <GitCommit className="w-3.5 h-3.5 text-cyan-400" />;
-      case 'issue': return <HelpCircle className="w-3.5 h-3.5 text-amber-400" />;
-      case 'discussion': return <MessageSquare className="w-3.5 h-3.5 text-purple-400" />;
-      default: return <Database className="w-3.5 h-3.5 text-slate-400" />;
-    }
-  };
-
   return (
-    <div className="glass-panel rounded-2xl p-6 md:p-8 glow-accent space-y-5">
+    <div className="bg-[#0b1120] border border-[#1a2940] rounded-xs p-5 space-y-3">
       
-      {/* HEADER & FILTERS */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      {/* HEADER & FILTER TABS */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1a2940] pb-2.5">
         <div>
-          <div className="flex items-center gap-2.5">
-            <ShieldCheck className="w-5 h-5 text-indigo-400" />
-            <h3 className="text-base font-bold text-white font-mono">
-              Why should I trust this explanation?
-            </h3>
-          </div>
-          <p className="text-xs text-slate-400 mt-0.5 font-sans">
-            Empirical historical evidence retrieved directly from Neo4j Cypher graph queries.
+          <h3 className="text-xs font-bold text-[#e8edf7] font-mono tracking-wider uppercase">
+            RETRIEVED EVIDENCE
+          </h3>
+          <p className="text-[11px] text-[#7f8ca3] font-sans">
+            Neo4j graph records.
           </p>
         </div>
 
-        {/* FILTER TABS */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-          <Filter className="w-3.5 h-3.5 text-slate-500 shrink-0 mr-1" />
+        {/* COMPACT FILTER TABS */}
+        <div className="flex items-center gap-1 overflow-x-auto font-mono text-[11px]">
           {filterTypes.map(ft => (
             ft.count > 0 || ft.key === 'all' ? (
               <button
                 key={ft.key}
                 onClick={() => setActiveFilter && setActiveFilter(ft.key)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-mono transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                className={`px-2 py-0.5 rounded-xs border transition-colors duration-150 whitespace-nowrap cursor-pointer ${
                   activeFilter === ft.key
-                    ? 'bg-indigo-600 text-white font-bold shadow'
-                    : 'bg-slate-900/80 text-slate-400 border border-slate-800 hover:text-slate-200'
+                    ? 'bg-[#00afc4]/15 text-[#00afc4] border-[#00afc4] font-semibold'
+                    : 'bg-[#080d18] text-[#56647a] border-[#1a2940] hover:text-[#e8edf7]'
                 }`}
               >
-                <span>{ft.label}</span>
-                <span className={`px-1.5 py-0.2 rounded text-[10px] ${
-                  activeFilter === ft.key ? 'bg-indigo-900 text-white' : 'bg-slate-950 text-slate-400'
-                }`}>
-                  {ft.count}
-                </span>
+                {ft.label} ({ft.count})
               </button>
             ) : null
           ))}
         </div>
       </div>
 
-      {/* EVIDENCE CARDS GRID */}
+      {/* COMPACT EVIDENCE ROWS */}
       {filteredEvidence.length === 0 ? (
-        <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-8 text-center text-slate-400 text-xs font-mono">
-          No evidence records match filter '{activeFilter}'.
+        <div className="py-6 text-center text-[#56647a] text-xs font-mono bg-[#080d18] border border-[#1a2940] rounded-xs">
+          No records match filter '{activeFilter}'.
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
           {filteredEvidence.map((item, idx) => {
             const hasUrl = item.url && item.url !== '#' && item.url.startsWith('http');
+            const isSelected = selectedEvidenceId === idx;
 
             return (
               <div
                 key={idx}
-                className="bg-slate-950/90 border border-slate-800/90 rounded-xl p-4 space-y-3 glass-panel-hover flex flex-col justify-between"
+                onClick={() => {
+                  setSelectedEvidenceId(idx);
+                  if (setActiveFilter && item.type) {
+                    setActiveFilter(item.type);
+                  }
+                }}
+                className={`p-3 rounded-xs border transition-all duration-150 cursor-pointer ${
+                  isSelected
+                    ? 'bg-[#00afc4]/10 border-[#00afc4] text-[#e8edf7]'
+                    : 'bg-[#0e1627] border-[#1a2940] text-[#7f8ca3] hover:border-[#263b59] hover:text-[#e8edf7]'
+                }`}
               >
-                <div className="space-y-2">
-                  {/* CARD HEADER */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className={`px-2.5 py-0.5 rounded-md border text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 ${getBadgeStyle(item.type)}`}>
-                      {getTypeIcon(item.type)}
+                {/* LINE 1: TYPE, TITLE, SOURCE LINK */}
+                <div className="flex items-start justify-between gap-2 font-sans text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[#00afc4] bg-[#00afc4]/10 px-1.5 py-0.2 border border-[#00afc4]/30 rounded-xs">
                       {item.type}
                     </span>
-                    <span className="text-[11px] text-slate-400 font-mono">
-                      @{item.author || 'contributor'}
+                    <span className="font-semibold text-[#e8edf7]">
+                      {item.title}
                     </span>
                   </div>
 
-                  {/* TITLE */}
-                  <h4 className="font-bold text-slate-100 text-sm leading-snug line-clamp-2">
-                    {item.title}
-                  </h4>
-
-                  {/* REASON / QUOTE */}
-                  {item.reason && (
-                    <p className="text-xs text-slate-300 italic bg-slate-900/80 p-2.5 rounded-lg border border-slate-800/80 line-clamp-3 font-sans">
-                      "{item.reason}"
-                    </p>
-                  )}
-                </div>
-
-                {/* CARD FOOTER */}
-                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono pt-3 border-t border-slate-900">
-                  <span>Date: {item.date || 'Historical Record'}</span>
-                  {hasUrl ? (
+                  {hasUrl && (
                     <a
                       href={item.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1 transition"
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-mono text-[10px] text-[#00afc4] hover:underline whitespace-nowrap font-semibold"
                     >
-                      <span>VIEW ON GITHUB</span>
-                      <ExternalLink className="w-3 h-3" />
+                      VIEW ON GITHUB →
                     </a>
-                  ) : (
-                    <span className="text-slate-600 text-[10px]">Graph Record</span>
                   )}
+                </div>
+
+                {/* LINE 2: REASON EXCERPT */}
+                {item.reason && (
+                  <p className="text-[11px] text-[#7f8ca3] italic font-sans pl-2 border-l border-[#00afc4] my-1.5 leading-relaxed">
+                    "{item.reason}"
+                  </p>
+                )}
+
+                {/* LINE 3: METADATA PROVENANCE */}
+                <div className="text-[10px] font-mono text-[#56647a] flex items-center justify-between pt-1">
+                  <span>@{item.author || 'contributor'}</span>
+                  <span>{item.date || 'Historical Event'}</span>
                 </div>
               </div>
             );

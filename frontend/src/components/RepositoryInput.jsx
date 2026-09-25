@@ -1,20 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, Search, Loader2, CheckCircle2, AlertCircle, Sparkles, ArrowRight } from 'lucide-react';
-
-const PRESET_REPOS = [
-  { name: 'expressjs/express', label: 'expressjs/express', tag: 'Primary Demo' },
-  { name: 'facebook/react', label: 'facebook/react', tag: 'UI Library' },
-  { name: 'vercel/next.js', label: 'vercel/next.js', tag: 'Fullstack Framework' },
-];
-
-const INGESTION_STAGES = [
-  'Reading repository history...',
-  'Mapping commits and pull requests...',
-  'Building the decision graph...',
-  'Connecting discussions and incidents...',
-  'Tracing evidence...',
-  'Ready to answer WHY.'
-];
 
 export default function RepositoryInput({
   repository,
@@ -25,144 +9,135 @@ export default function RepositoryInput({
   ingestError,
   backendUnavailable
 }) {
-  const [stageIndex, setStageIndex] = useState(0);
+  const [activeStage, setActiveStage] = useState(0);
 
-  // Advance stage indicator text while active request runs
+  const stages = [
+    { key: 'CONNECT', label: '01 CONNECT' },
+    { key: 'FETCH', label: '02 FETCH' },
+    { key: 'PARSE', label: '03 PARSE' },
+    { key: 'INDEX', label: '04 INDEX' },
+    { key: 'BUILD GRAPH', label: '05 BUILD GRAPH' },
+    { key: 'READY', label: '06 READY' }
+  ];
+
   useEffect(() => {
     let timer;
     if (ingestLoading) {
-      setStageIndex(0);
+      setActiveStage(1);
       timer = setInterval(() => {
-        setStageIndex((prev) => (prev < INGESTION_STAGES.length - 2 ? prev + 1 : prev));
-      }, 1800);
+        setActiveStage(prev => (prev < 4 ? prev + 1 : prev));
+      }, 700);
     } else if (ingestSuccess) {
-      setStageIndex(INGESTION_STAGES.length - 1);
+      setActiveStage(5);
+    } else {
+      setActiveStage(0);
     }
     return () => clearInterval(timer);
   }, [ingestLoading, ingestSuccess]);
 
-  const selectPreset = (repoName) => {
-    setRepository(repoName);
-  };
+  const presetRepos = [
+    { label: 'expressjs/express' },
+    { label: 'facebook/react' },
+    { label: 'vercel/next.js' }
+  ];
 
   return (
-    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden glow-accent">
+    <div className="bg-[#0b1120] border border-[#1a2940] rounded-xs p-5 space-y-4">
       
-      {/* HEADER & PRESETS */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-5 mb-5">
+      {/* HEADER & PRESETS ROW */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1a2940] pb-3">
         <div>
-          <div className="flex items-center gap-2">
-            <GitBranch className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-lg font-bold text-white font-mono">1. Connect & Ingest Repository</h2>
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="text-[#00afc4] font-bold">01.</span>
+            <span className="text-[#e8edf7] font-bold uppercase tracking-wide">
+              connect & ingest repository
+            </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1 font-sans">
-            Extract commits, PRs, issues, and discussions into the Neo4j Graph Database.
+          <p className="text-[11px] text-[#7f8ca3] font-sans mt-0.5">
+            Connect a repository to reconstruct the historical context behind the code.
           </p>
         </div>
 
-        {/* PRESET REPO CHIPS */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-slate-500 font-mono">Presets:</span>
-          {PRESET_REPOS.map((preset) => (
+        {/* PRESET CHIPS */}
+        <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
+          {presetRepos.map(preset => (
             <button
-              key={preset.name}
+              key={preset.label}
               type="button"
-              onClick={() => selectPreset(preset.name)}
-              disabled={ingestLoading}
-              className={`px-3 py-1.5 text-xs rounded-lg border font-mono transition-all flex items-center gap-1.5 ${
-                repository === preset.name
-                  ? 'bg-indigo-950 text-indigo-300 border-indigo-700 glow-accent font-semibold'
-                  : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
+              onClick={() => setRepository(preset.label)}
+              className={`px-2.5 py-1 text-[11px] rounded-xs border transition-colors duration-150 cursor-pointer ${
+                repository === preset.label
+                  ? 'bg-[#00afc4]/15 text-[#00afc4] border-[#00afc4] font-semibold'
+                  : 'bg-[#0e1627] text-[#7f8ca3] border-[#1a2940] hover:text-[#e8edf7] hover:border-[#263b59]'
               }`}
             >
-              <span>{preset.label}</span>
+              {preset.label}
             </button>
           ))}
         </div>
       </div>
 
-      {/* FORM */}
-      <form onSubmit={handleIngest} className="space-y-4">
-        <div className="flex flex-col sm:flex-row items-stretch gap-3">
-          <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-              <Search className="h-4 w-4 text-slate-500" />
-            </div>
-            <input
-              type="text"
-              value={repository}
-              onChange={(e) => setRepository(e.target.value)}
-              placeholder="e.g. expressjs/express or facebook/react"
-              disabled={ingestLoading}
-              className="w-full bg-slate-950/90 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-sm font-mono text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={ingestLoading || !repository.trim() || backendUnavailable}
-            className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-sm px-7 py-3 rounded-xl transition-all flex items-center justify-center gap-2 glow-accent min-w-[200px]"
-          >
-            {ingestLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin text-white" />
-                <span>Ingesting...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 text-indigo-200" />
-                <span>Analyze Repository</span>
-                <ArrowRight className="w-4 h-4 text-indigo-200" />
-              </>
-            )}
-          </button>
+      {/* INPUT FORM */}
+      <form onSubmit={handleIngest} className="flex flex-col sm:flex-row items-stretch gap-2">
+        <div className="relative flex-1">
+          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono text-[#56647a]">
+            github.com/
+          </span>
+          <input
+            type="text"
+            value={repository}
+            onChange={(e) => setRepository(e.target.value)}
+            placeholder="owner/repository"
+            disabled={ingestLoading || backendUnavailable}
+            className="w-full bg-[#080d18] border border-[#1a2940] rounded-xs pl-28 pr-4 py-2 text-xs font-mono text-[#e8edf7] placeholder-[#56647a] focus:outline-none focus:border-[#00afc4] transition-colors duration-150 disabled:opacity-50"
+          />
         </div>
+
+        <button
+          type="submit"
+          disabled={ingestLoading || !repository.trim() || backendUnavailable}
+          className="bg-[#6754f5] hover:bg-[#5241db] disabled:opacity-50 text-[#ffffff] font-mono text-xs font-semibold px-5 py-2 rounded-xs transition-colors duration-150 whitespace-nowrap cursor-pointer"
+        >
+          {ingestLoading ? 'INGESTING...' : 'ANALYZE REPOSITORY'}
+        </button>
       </form>
 
-      {/* STAGED PROCESS INDICATOR */}
-      {ingestLoading && (
-        <div className="mt-4 p-4 bg-indigo-950/40 border border-indigo-800/50 rounded-xl flex items-center gap-3">
-          <Loader2 className="w-5 h-5 animate-spin text-indigo-400 shrink-0" />
-          <div className="space-y-0.5">
-            <div className="text-xs font-mono text-indigo-300 font-bold">
-              {INGESTION_STAGES[stageIndex]}
-            </div>
-            <div className="text-[11px] text-slate-400 font-mono">
-              Extracting graph nodes for <span className="text-slate-200 font-semibold">{repository}</span>
-            </div>
+      {/* INGESTION STAGES BAR */}
+      {(ingestLoading || ingestSuccess) && (
+        <div className="pt-2 border-t border-[#1a2940] space-y-2">
+          <div className="flex justify-between items-center text-[10px] font-mono">
+            <span className="text-[#56647a]">GRAPH INGESTION PIPELINE</span>
+            <span className="text-[#00afc4] font-semibold">{stages[activeStage]?.key}</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 font-mono text-[10px]">
+            {stages.map((stg, idx) => {
+              const isCompleted = idx < activeStage || (idx === activeStage && ingestSuccess);
+              const isActive = idx === activeStage && ingestLoading;
+
+              return (
+                <div
+                  key={stg.key}
+                  className={`px-2 py-1 rounded-xs border text-center transition-all duration-150 ${
+                    isCompleted
+                      ? 'bg-[#0f6e58]/30 border-[#18b889] text-[#18b889] font-bold'
+                      : isActive
+                      ? 'bg-[#00afc4]/20 border-[#00afc4] text-[#00afc4] font-bold'
+                      : 'bg-[#080d18] border-[#1a2940] text-[#56647a]'
+                  }`}
+                >
+                  {stg.label}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* ERROR ALERT */}
+      {/* ERROR DISPLAY */}
       {ingestError && (
-        <div className="mt-4 bg-rose-950/50 border border-rose-800/80 rounded-xl p-4 text-rose-300 text-xs font-mono flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold text-rose-200 uppercase tracking-wide">Ingestion Failure</span>
-            <p className="mt-1 leading-relaxed text-slate-300">{ingestError}</p>
-          </div>
-        </div>
-      )}
-
-      {/* SUCCESS ALERT */}
-      {ingestSuccess && !ingestLoading && (
-        <div className="mt-4 bg-emerald-950/40 border border-emerald-800/60 rounded-xl p-4 text-emerald-300 text-xs font-mono flex items-start gap-3 glow-emerald">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
-          <div className="space-y-1 w-full">
-            <div className="flex items-center justify-between">
-              <span className="font-bold text-emerald-200">Decision Graph Constructed</span>
-              <span className="text-[10px] text-emerald-400 uppercase tracking-wider bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded font-mono">Ready to answer WHY</span>
-            </div>
-            <p className="text-slate-300 font-mono text-xs">{ingestSuccess.message}</p>
-            {ingestSuccess.stats && (
-              <div className="flex flex-wrap gap-4 pt-2 mt-2 border-t border-emerald-900/60 text-slate-300">
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400 font-bold">{ingestSuccess.stats.commits || 0}</span> Commits</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400 font-bold">{ingestSuccess.stats.pullRequests || 0}</span> Pull Requests</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400 font-bold">{ingestSuccess.stats.issues || 0}</span> Issues</span>
-              </div>
-            )}
-          </div>
+        <div className="p-3 bg-[#a97863]/10 border border-[#a97863]/40 text-xs font-mono text-[#a97863] rounded-xs">
+          {ingestError}
         </div>
       )}
 

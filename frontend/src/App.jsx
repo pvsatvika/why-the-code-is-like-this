@@ -115,20 +115,27 @@ export default function App() {
     }
   };
 
+  const handleReset = () => {
+    setQueryResult(null);
+    setQueryError(null);
+  };
+
   return (
-    <div className="min-h-screen bg-[#090d16] bg-grid-pattern text-slate-100 font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
+    <div className="min-h-screen bg-[#070b16] text-[#e8edf7] font-sans selection:bg-[#00afc4]/30 selection:text-[#ffffff]">
       
-      {/* HEADER BAR */}
+      {/* HEADER */}
       <Header
+        repository={repository}
         health={health}
         healthLoading={healthLoading}
         backendUnavailable={backendUnavailable}
+        onReset={queryResult ? handleReset : null}
       />
 
-      {/* MAIN DEMO WORKSPACE CONTAINER */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-8 space-y-8">
+      {/* CENTERED APPLICATION WORKSPACE (MAX-WIDTH: 1180PX) */}
+      <main className="max-w-[1180px] mx-auto px-4 md:px-6 py-6 space-y-5">
         
-        {/* SECTION 1: REPOSITORY INGESTION CARD */}
+        {/* PANEL 1: REPOSITORY INGESTION CONTROL */}
         <RepositoryInput
           repository={repository}
           setRepository={setRepository}
@@ -139,7 +146,7 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* WORKSPACE REPO METRICS BANNER */}
+        {/* ACTIVE REPOSITORY CONTEXT BAR */}
         {ingestSuccess && (
           <WorkspaceHeader
             repository={ingestSuccess.repository || repository}
@@ -147,7 +154,7 @@ export default function App() {
           />
         )}
 
-        {/* SECTION 2: ASK WHY CORE WORKSPACE */}
+        {/* PANEL 2: ASK WHY QUESTION CONTROL */}
         <QuestionPanel
           question={question}
           setQuestion={setQuestion}
@@ -157,13 +164,11 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* SECTION 3: ANSWER & EVIDENCE RESULTS */}
+        {/* QUERY RESULT CANVAS OR HERO STARTING STATE */}
         {queryResult ? (
-          <div className="space-y-8 animate-fadeIn">
-            {/* 1. WHY ANSWER EXPLANATION */}
-            <AnswerPanel queryResult={queryResult} />
-
-            {/* 2. DYNAMIC DECISION CHAIN */}
+          <div className="space-y-5">
+            
+            {/* GRAPH REASONING TRAIL */}
             <DecisionChain
               question={question}
               evidence={queryResult.evidence}
@@ -171,34 +176,45 @@ export default function App() {
               onSelectType={(type) => setEvidenceFilter(type)}
             />
 
-            {/* 3. RETRIEVED GRAPH EVIDENCE CARDS */}
-            <EvidencePanel
-              evidence={queryResult.evidence}
-              activeFilter={evidenceFilter}
-              setActiveFilter={(type) => setEvidenceFilter(type)}
-            />
+            {/* TWO-COLUMN RESULTS: CANVAS & EVIDENCE */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              
+              {/* MAIN WHY ANSWER CANVAS (7 COLS) */}
+              <div className="lg:col-span-7 space-y-5">
+                <AnswerPanel queryResult={queryResult} />
 
-            {/* 4. WHY THIS ANSWER ARCHITECTURE PIPELINE */}
-            <WhyThisAnswer
-              evidenceCount={queryResult.evidence?.length || 0}
-              confidence={queryResult.confidence}
-            />
+                <WhyThisAnswer
+                  evidenceCount={queryResult.evidence?.length || 0}
+                  confidence={queryResult.confidence}
+                />
+              </div>
 
-            {/* 5. CHRONOLOGICAL DECISION TIMELINE */}
-            <HistoryTimeline evidence={queryResult.evidence} />
+              {/* EVIDENCE & TIMELINE (5 COLS) */}
+              <div className="lg:col-span-5 space-y-5">
+                <EvidencePanel
+                  evidence={queryResult.evidence}
+                  activeFilter={evidenceFilter}
+                  setActiveFilter={(type) => setEvidenceFilter(type)}
+                />
+
+                <HistoryTimeline evidence={queryResult.evidence} />
+              </div>
+
+            </div>
+
           </div>
         ) : (
-          /* FIRST 10 SECONDS LANDING STATE GUIDANCE */
-          <EmptyState onSelectPreset={(repo) => {
-            setRepository(repo);
+          /* PANEL 3: HERO STARTING WORKSPACE */
+          <EmptyState onSelectPreset={(preset) => {
+            setRepository(preset);
           }} />
         )}
 
       </main>
 
       {/* FOOTER */}
-      <footer className="border-t border-slate-900 py-6 text-center text-xs text-slate-500 font-mono">
-        "Why The Code Is Like This" — Hackathon Prototype • Neo4j GraphRAG & Sarvam AI Engine
+      <footer className="border-t border-[#1a2940] py-5 text-center text-[11px] text-[#56647a] font-mono">
+        WHY THE CODE IS LIKE THIS :: NEO4J GRAPHRAG & SARVAM AI
       </footer>
 
     </div>

@@ -2,65 +2,67 @@
 
 @layer base {
   body {
-    background-color: #090d16;
-    color: #e2e8f0;
-    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #070b16;
+    background-image: linear-gradient(to right, rgba(26, 41, 64, 0.25) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(26, 41, 64, 0.25) 1px, transparent 1px);
+    background-size: 24px 24px;
+    color: #e8edf7;
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
     overflow-x: hidden;
+    line-height: 1.5;
+  }
+
+  h1, h2, h3, h4, .font-tech-heading {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #e8edf7;
+  }
+
+  code, pre, .font-mono, .font-tech-mono {
+    font-family: 'IBM Plex Mono', Consolas, Monaco, monospace;
   }
 }
 
-/* Developer Studio Grid Background Pattern */
-.bg-grid-pattern {
-  background-size: 36px 36px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-}
+/* Dark Navy Architectural Utility Classes */
+.bg-page { background-color: #070b16; }
+.bg-surface { background-color: #0b1120; }
+.bg-surface-sec { background-color: #0e1627; }
+.bg-input { background-color: #080d18; }
 
-/* Glow Effects */
-.glow-accent {
-  box-shadow: 0 0 30px -5px rgba(99, 102, 241, 0.25);
-}
+.text-main { color: #e8edf7; }
+.text-sec { color: #7f8ca3; }
+.text-muted { color: #56647a; }
+.text-cyan { color: #00afc4; }
+.text-cyan-bright { color: #12c7d9; }
+.text-purple { color: #6754f5; }
+.text-green { color: #18b889; }
 
-.glow-cyan {
-  box-shadow: 0 0 25px -5px rgba(6, 182, 212, 0.25);
-}
+.border-dark { border-color: #1a2940; }
+.border-dark-active { border-color: #263b59; }
 
-.glow-emerald {
-  box-shadow: 0 0 25px -5px rgba(16, 185, 129, 0.25);
-}
-
-.glow-violet {
-  box-shadow: 0 0 35px -5px rgba(139, 92, 246, 0.3);
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: #090d16;
-}
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
+.panel-dark {
+  background-color: #0b1120;
+  border: 1px solid #1a2940;
   border-radius: 4px;
 }
+
+.panel-dark-sec {
+  background-color: #0e1627;
+  border: 1px solid #1a2940;
+  border-radius: 4px;
+}
+
+/* Custom Technical Scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #070b16;
+}
+::-webkit-scrollbar-thumb {
+  background: #1a2940;
+  border-radius: 3px;
+}
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-/* Glass Card styling */
-.glass-panel {
-  background: rgba(15, 23, 42, 0.65);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.glass-panel-hover {
-  transition: all 0.2s ease-in-out;
-}
-.glass-panel-hover:hover {
-  border-color: rgba(99, 102, 241, 0.4);
-  box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.15);
+  background: #00afc4;
 }
