@@ -42,45 +42,22 @@ export default function RepositoryInput({
   ];
 
   return (
-    <div className="bg-[#0b1120] border border-[#1a2940] rounded-xs p-5 space-y-4">
+    <div className="py-8 space-y-6 border-b border-[#1f2430]" id="repository-section">
       
-      {/* HEADER & PRESETS ROW */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1a2940] pb-3">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="text-[#00afc4] font-bold">01.</span>
-            <span className="text-[#e8edf7] font-bold uppercase tracking-wide">
-              connect & ingest repository
-            </span>
-          </div>
-          <p className="text-[11px] text-[#7f8ca3] font-sans mt-0.5">
-            Connect a repository to reconstruct the historical context behind the code.
-          </p>
-        </div>
-
-        {/* PRESET CHIPS */}
-        <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
-          {presetRepos.map(preset => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => setRepository(preset.label)}
-              className={`px-2.5 py-1 text-[11px] rounded-xs border transition-colors duration-150 cursor-pointer ${
-                repository === preset.label
-                  ? 'bg-[#00afc4]/15 text-[#00afc4] border-[#00afc4] font-semibold'
-                  : 'bg-[#0e1627] text-[#7f8ca3] border-[#1a2940] hover:text-[#e8edf7] hover:border-[#263b59]'
-              }`}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
+      {/* HEADING & SUPPORTING TEXT */}
+      <div className="space-y-2">
+        <h2 className="text-3xl sm:text-4xl font-extrabold text-[#f8fafc] tracking-tight">
+          Start with a repository.
+        </h2>
+        <p className="text-base text-[#9ca3af] font-sans">
+          Connect a public GitHub repository and reconstruct the history behind its code.
+        </p>
       </div>
 
-      {/* INPUT FORM */}
-      <form onSubmit={handleIngest} className="flex flex-col sm:flex-row items-stretch gap-2">
+      {/* LARGE HORIZONTAL INTERACTION BAR */}
+      <form onSubmit={handleIngest} className="flex flex-col sm:flex-row items-stretch gap-4">
         <div className="relative flex-1">
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-mono text-[#56647a]">
+          <span className="absolute left-6 top-1/2 -translate-y-1/2 text-base font-mono text-[#6b7280]">
             github.com/
           </span>
           <input
@@ -89,28 +66,49 @@ export default function RepositoryInput({
             onChange={(e) => setRepository(e.target.value)}
             placeholder="owner/repository"
             disabled={ingestLoading || backendUnavailable}
-            className="w-full bg-[#080d18] border border-[#1a2940] rounded-xs pl-28 pr-4 py-2 text-xs font-mono text-[#e8edf7] placeholder-[#56647a] focus:outline-none focus:border-[#00afc4] transition-colors duration-150 disabled:opacity-50"
+            className="w-full bg-[#0d0e14] border border-[#1f2430] rounded-xl pl-36 pr-6 py-5 text-base font-mono text-[#f8fafc] placeholder-[#6b7280] focus:outline-none focus:border-[#8b5cf6] focus:ring-1 focus:ring-[#8b5cf6] transition-all duration-200 disabled:opacity-50"
           />
         </div>
 
         <button
           type="submit"
           disabled={ingestLoading || !repository.trim() || backendUnavailable}
-          className="bg-[#6754f5] hover:bg-[#5241db] disabled:opacity-50 text-[#ffffff] font-mono text-xs font-semibold px-5 py-2 rounded-xs transition-colors duration-150 whitespace-nowrap cursor-pointer"
+          className="bg-[#8b5cf6] hover:bg-[#7c3aed] disabled:opacity-50 text-[#f8fafc] font-mono text-sm font-bold px-9 py-5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-[#8b5cf6]/25 whitespace-nowrap hover:-translate-y-0.5"
         >
-          {ingestLoading ? 'INGESTING...' : 'ANALYZE REPOSITORY'}
+          {ingestLoading ? 'INGESTING GRAPH...' : 'ANALYZE REPOSITORY'}
         </button>
       </form>
 
-      {/* INGESTION STAGES BAR */}
+      {/* PRESET REPOSITORIES AS SIMPLE SELECTABLE LINKS */}
+      <div className="flex flex-wrap items-center gap-4 text-sm font-sans pt-1">
+        <span className="text-[#6b7280]">Selectable repositories:</span>
+        {presetRepos.map((preset, idx) => (
+          <React.Fragment key={preset.label}>
+            <button
+              type="button"
+              onClick={() => setRepository(preset.label)}
+              className={`font-mono text-sm transition-all duration-150 cursor-pointer ${
+                repository === preset.label
+                  ? 'text-[#06b6d4] font-bold border-b-2 border-[#06b6d4] pb-0.5'
+                  : 'text-[#9ca3af] hover:text-[#f8fafc] border-b border-transparent hover:border-[#9ca3af] pb-0.5'
+              }`}
+            >
+              {preset.label}
+            </button>
+            {idx < presetRepos.length - 1 && <span className="text-[#1f2430]">·</span>}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* INGESTION STAGES PIPELINE */}
       {(ingestLoading || ingestSuccess) && (
-        <div className="pt-2 border-t border-[#1a2940] space-y-2">
-          <div className="flex justify-between items-center text-[10px] font-mono">
-            <span className="text-[#56647a]">GRAPH INGESTION PIPELINE</span>
-            <span className="text-[#00afc4] font-semibold">{stages[activeStage]?.key}</span>
+        <div className="pt-4 border-t border-[#1f2430] space-y-3">
+          <div className="flex justify-between items-center text-xs font-mono">
+            <span className="text-[#9ca3af]">PIPELINE PROGRESS</span>
+            <span className="text-[#06b6d4] font-bold">{stages[activeStage]?.key}</span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 font-mono text-[10px]">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 font-mono text-xs">
             {stages.map((stg, idx) => {
               const isCompleted = idx < activeStage || (idx === activeStage && ingestSuccess);
               const isActive = idx === activeStage && ingestLoading;
@@ -118,12 +116,12 @@ export default function RepositoryInput({
               return (
                 <div
                   key={stg.key}
-                  className={`px-2 py-1 rounded-xs border text-center transition-all duration-150 ${
+                  className={`px-3 py-2 rounded-lg border text-center transition-all duration-200 ${
                     isCompleted
-                      ? 'bg-[#0f6e58]/30 border-[#18b889] text-[#18b889] font-bold'
+                      ? 'bg-[#06b6d4]/15 border-[#06b6d4] text-[#06b6d4] font-bold'
                       : isActive
-                      ? 'bg-[#00afc4]/20 border-[#00afc4] text-[#00afc4] font-bold'
-                      : 'bg-[#080d18] border-[#1a2940] text-[#56647a]'
+                      ? 'bg-[#8b5cf6]/25 border-[#8b5cf6] text-white font-bold animate-pulse'
+                      : 'bg-[#0d0e14] border-[#1f2430] text-[#6b7280]'
                   }`}
                 >
                   {stg.label}
@@ -136,7 +134,7 @@ export default function RepositoryInput({
 
       {/* ERROR DISPLAY */}
       {ingestError && (
-        <div className="p-3 bg-[#a97863]/10 border border-[#a97863]/40 text-xs font-mono text-[#a97863] rounded-xs">
+        <div className="p-4 bg-[#ef4444]/10 border border-[#ef4444]/40 text-xs font-mono text-[#ef4444] rounded-xl">
           {ingestError}
         </div>
       )}

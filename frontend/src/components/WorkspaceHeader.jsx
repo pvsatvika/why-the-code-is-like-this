@@ -4,24 +4,26 @@ export default function WorkspaceHeader({ repository, stats }) {
   if (!repository) return null;
 
   return (
-    <div className="bg-[#0e1627] border border-[#1a2940] rounded-xs px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
-      <div className="flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#00afc4]" />
-        <span className="text-[#56647a]">ACTIVE REPOSITORY:</span>
-        <span className="font-bold text-[#00afc4]">{repository}</span>
+    <div className="bg-[#12141d] border border-[#1f2430] rounded-xl px-6 py-4 flex flex-wrap items-center justify-between gap-4 text-xs font-mono shadow-md">
+      <div className="flex items-center gap-3">
+        <span className="w-2.5 h-2.5 rounded-full bg-[#06b6d4] shadow-[0_0_8px_#06b6d4]" />
+        <span className="text-[#9ca3af]">ACTIVE REPOSITORY CONTEXT:</span>
+        <span className="font-bold text-white text-sm">{repository}</span>
       </div>
 
-      <div className="flex items-center gap-3 text-[#7f8ca3] text-[11px]">
+      <div className="flex items-center gap-5 text-[#9ca3af]">
         {stats?.commits !== undefined && (
-          <span><strong className="text-[#e8edf7]">{stats.commits}</strong> COMMITS</span>
+          <span><strong className="text-white text-xs">{stats.commits}</strong> COMMITS</span>
         )}
         {stats?.pullRequests !== undefined && (
-          <span><strong className="text-[#e8edf7]">{stats.pullRequests}</strong> PRS</span>
+          <span><strong className="text-white text-xs">{stats.pullRequests}</strong> PRS</span>
         )}
         {stats?.issues !== undefined && (
-          <span><strong className="text-[#e8edf7]">{stats.issues}</strong> ISSUES</span>
+          <span><strong className="text-white text-xs">{stats.issues}</strong> ISSUES</span>
         )}
-        <span className="text-[#18b889]">NEO4J READY</span>
+        <span className="text-[#06b6d4] font-bold bg-[#06b6d4]/10 border border-[#06b6d4]/30 px-2.5 py-1 rounded-md">
+          NEO4J GRAPH READY
+        </span>
       </div>
     </div>
   );

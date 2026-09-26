@@ -47,7 +47,7 @@ function safeValue(val, defaultVal = '') {
 /**
  * Extracts Decision text signals with provenance.
  */
-function extractDecisionSignal(text, sourceType, sourceId, sourceUrl, author, date) {
+function extractDecisionSignal(text, sourceType, sourceId, sourceUrl, author, date, repoId) {
   if (!text || typeof text !== 'string') return null;
 
   const decisionRegex = /\b(because|reason|chose|decided|instead|due to|workaround|breaking change|migration|deprecated|performance|compatibility|security|refactor|update|redesign|implement|support)\b/i;
@@ -64,6 +64,7 @@ function extractDecisionSignal(text, sourceType, sourceId, sourceUrl, author, da
     sourceUrl: sourceUrl || '#',
     author: author || 'Unknown',
     date: date || '',
+    repoId,
     confidence: 'supported',
   };
 }
@@ -71,7 +72,7 @@ function extractDecisionSignal(text, sourceType, sourceId, sourceUrl, author, da
 /**
  * Extracts Incident text signals with provenance.
  */
-function extractIncidentSignal(text, sourceType, sourceId, sourceUrl, author, date) {
+function extractIncidentSignal(text, sourceType, sourceId, sourceUrl, author, date, repoId) {
   if (!text || typeof text !== 'string') return null;
 
   const incidentRegex = /\b(bug|fix|regression|crash|vulnerability|failure|panic|memory leak|outage|issue|error|prevent|solve)\b/i;
@@ -88,6 +89,7 @@ function extractIncidentSignal(text, sourceType, sourceId, sourceUrl, author, da
     sourceUrl: sourceUrl || '#',
     author: author || 'Unknown',
     date: date || '',
+    repoId,
     confidence: 'supported',
   };
 }
@@ -133,7 +135,7 @@ export async function buildDecisionGraph(repoData) {
   const { owner, repo, url: repoUrl } = metadata;
   const repoId = `${owner}/${repo}`;
 
-  console.log(`[Neo4j Service] Constructing connected Decision Graph for ${repoId}...`);
+  console.log(`[Neo4j Service] Constructing repository-isolated Decision Graph for ${repoId}...`);
 
   // Clear target repository graph first for idempotent re-ingestion
   await clearRepositoryGraph(owner, repo);
@@ -149,7 +151,8 @@ export async function buildDecisionGraph(repoData) {
         MERGE (r:Repository { id: $repoId })
         SET r.name = $repo,
             r.owner = $owner,
-            r.url = $repoUrl
+            r.url = $repoUrl,
+            r.ingestedAt = timestamp()
         `,
         { repoId, repo, owner, repoUrl }
       )
@@ -166,7 +169,8 @@ export async function buildDecisionGraph(repoData) {
           MERGE (c:Commit { sha: $sha })
           SET c.message = $message,
               c.date = $date,
-              c.url = $commitUrl
+              c.url = $commitUrl,
+              c.repoId = $repoId
           MERGE (r)-[:HAS_COMMIT]->(c)
 
           MERGE (dev:Developer { username: $author })
@@ -185,16 +189,17 @@ export async function buildDecisionGraph(repoData) {
             MATCH (c:Commit { sha: $sha })
             MERGE (f:File { id: $fileId })
             SET f:CodeEntity,
-                f.filename = $filename
+                f.filename = $filename,
+                f.repoId = $repoId
             MERGE (c)-[:MODIFIES]->(f)
             `,
-            { sha, fileId, filename: file.filename }
+            { sha, fileId, filename: file.filename, repoId }
           )
         );
       }
 
       // Commit Decision Signal
-      const decSignal = extractDecisionSignal(message, 'commit', sha, commitUrl, author, date);
+      const decSignal = extractDecisionSignal(message, 'commit', sha, commitUrl, author, date, repoId);
       if (decSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -207,7 +212,8 @@ export async function buildDecisionGraph(repoData) {
                 dec.sourceUrl = $sourceUrl,
                 dec.author = $author,
                 dec.date = $date,
-                dec.confidence = $confidence
+                dec.confidence = $confidence,
+                dec.repoId = $repoId
             MERGE (c)-[:SUPPORTS]->(dec)
             MERGE (dec)-[:IMPLEMENTED_BY]->(c)
             `,
@@ -231,7 +237,7 @@ export async function buildDecisionGraph(repoData) {
       }
 
       // Commit Incident Signal
-      const incSignal = extractIncidentSignal(message, 'commit', sha, commitUrl, author, date);
+      const incSignal = extractIncidentSignal(message, 'commit', sha, commitUrl, author, date, repoId);
       if (incSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -244,7 +250,8 @@ export async function buildDecisionGraph(repoData) {
                 inc.sourceUrl = $sourceUrl,
                 inc.author = $author,
                 inc.date = $date,
-                inc.confidence = $confidence
+                inc.confidence = $confidence,
+                inc.repoId = $repoId
             MERGE (c)-[:ADDRESSES]->(inc)
             MERGE (inc)-[:ADDRESSED_BY]->(c)
             `,
@@ -267,7 +274,8 @@ export async function buildDecisionGraph(repoData) {
               pr.title = $title,
               pr.body = $body,
               pr.merged_at = $mergedAt,
-              pr.url = $prUrl
+              pr.url = $prUrl,
+              pr.repoId = $repoId
           MERGE (r)-[:HAS_PULL_REQUEST]->(pr)
 
           MERGE (dev:Developer { username: $author })
@@ -286,22 +294,23 @@ export async function buildDecisionGraph(repoData) {
         )
       );
 
-      // Link PR-associated commits reliably: MERGE Commit node if it does not exist yet
+      // Link PR-associated commits reliably
       for (const prCommitSha of pr.pr_commits || []) {
         await session.executeWrite((tx) =>
           tx.run(
             `
             MATCH (pr:PullRequest { id: $prId })
             MERGE (c:Commit { sha: $sha })
+            SET c.repoId = $repoId
             MERGE (c)-[:RELATED_TO]->(pr)
             `,
-            { prId, sha: prCommitSha }
+            { prId, sha: prCommitSha, repoId }
           )
         );
       }
 
       // Check PR Title/Body for Decision Signals
-      const prDecSignal = extractDecisionSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at);
+      const prDecSignal = extractDecisionSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at, repoId);
       if (prDecSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -314,7 +323,8 @@ export async function buildDecisionGraph(repoData) {
                 dec.sourceUrl = $sourceUrl,
                 dec.author = $author,
                 dec.date = $date,
-                dec.confidence = $confidence
+                dec.confidence = $confidence,
+                dec.repoId = $repoId
             MERGE (pr)-[:IMPLEMENTS]->(dec)
             MERGE (dec)-[:MADE_IN]->(pr)
             `,
@@ -324,7 +334,7 @@ export async function buildDecisionGraph(repoData) {
       }
 
       // Check PR for Incident Signal
-      const prIncSignal = extractIncidentSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at);
+      const prIncSignal = extractIncidentSignal(`${pr.title}\n${pr.body}`, 'pull_request', pr.number, pr.url, pr.author, pr.merged_at, repoId);
       if (prIncSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -337,7 +347,8 @@ export async function buildDecisionGraph(repoData) {
                 inc.sourceUrl = $sourceUrl,
                 inc.author = $author,
                 inc.date = $date,
-                inc.confidence = $confidence
+                inc.confidence = $confidence,
+                inc.repoId = $repoId
             MERGE (pr)-[:ADDRESSES]->(inc)
             MERGE (inc)-[:ADDRESSED_BY]->(pr)
             `,
@@ -356,7 +367,8 @@ export async function buildDecisionGraph(repoData) {
             SET d.user = $user,
                 d.body = $body,
                 d.type = $type,
-                d.date = $date
+                d.date = $date,
+                d.repoId = $repoId
             MERGE (pr)-[:HAS_DISCUSSION]->(d)
 
             MERGE (dev:Developer { username: $user })
@@ -370,6 +382,7 @@ export async function buildDecisionGraph(repoData) {
               body: comment.body,
               type: comment.type,
               date: comment.date || '',
+              repoId,
             }
           )
         );
@@ -383,17 +396,18 @@ export async function buildDecisionGraph(repoData) {
               MATCH (d:Discussion { id: $commentId })
               MERGE (f:File { id: $fileId })
               SET f:CodeEntity,
-                  f.filename = $path
+                  f.filename = $path,
+                  f.repoId = $repoId
               MERGE (pr)-[:DISCUSSES]->(f)
               MERGE (d)-[:ABOUT]->(f)
               `,
-              { prId, commentId: String(comment.id), fileId, path: comment.path }
+              { prId, commentId: String(comment.id), fileId, path: comment.path, repoId }
             )
           );
         }
 
         // Discussion Decision Signal
-        const discDecSignal = extractDecisionSignal(comment.body, 'discussion', comment.id, pr.url, comment.user, comment.date);
+        const discDecSignal = extractDecisionSignal(comment.body, 'discussion', comment.id, pr.url, comment.user, comment.date, repoId);
         if (discDecSignal) {
           await session.executeWrite((tx) =>
             tx.run(
@@ -406,7 +420,8 @@ export async function buildDecisionGraph(repoData) {
                   dec.sourceUrl = $sourceUrl,
                   dec.author = $author,
                   dec.date = $date,
-                  dec.confidence = $confidence
+                  dec.confidence = $confidence,
+                  dec.repoId = $repoId
               MERGE (d)-[:SUPPORTS]->(dec)
               MERGE (dec)-[:SUPPORTED_BY]->(d)
               `,
@@ -430,7 +445,8 @@ export async function buildDecisionGraph(repoData) {
               i.title = $title,
               i.body = $body,
               i.state = $state,
-              i.url = $issueUrl
+              i.url = $issueUrl,
+              i.repoId = $repoId
           MERGE (r)-[:HAS_ISSUE]->(i)
 
           MERGE (dev:Developer { username: $author })
@@ -454,18 +470,18 @@ export async function buildDecisionGraph(repoData) {
         tx.run(
           `
           MATCH (i:Issue { id: $issueId })
-          MATCH (pr:PullRequest)
+          MATCH (pr:PullRequest { repoId: $repoId })
           WHERE pr.body CONTAINS ('#' + toString($number))
              OR pr.title CONTAINS ('#' + toString($number))
           MERGE (i)-[:RELATED_TO]->(pr)
           MERGE (pr)-[:ADDRESSES]->(i)
           `,
-          { issueId, number: neo4j.int(issue.number) }
+          { issueId, number: neo4j.int(issue.number), repoId }
         )
       );
 
       // Create Incident node if Issue describes bug/incident
-      const issueIncSignal = extractIncidentSignal(`${issue.title}\n${issue.body}`, 'issue', issue.number, issue.url, issue.author, issue.created_at);
+      const issueIncSignal = extractIncidentSignal(`${issue.title}\n${issue.body}`, 'issue', issue.number, issue.url, issue.author, issue.created_at, repoId);
       if (issueIncSignal) {
         await session.executeWrite((tx) =>
           tx.run(
@@ -478,7 +494,8 @@ export async function buildDecisionGraph(repoData) {
                 inc.sourceUrl = $sourceUrl,
                 inc.author = $author,
                 inc.date = $date,
-                inc.confidence = $confidence
+                inc.confidence = $confidence,
+                inc.repoId = $repoId
             MERGE (i)-[:DESCRIBES]->(inc)
             `,
             { issueId, ...issueIncSignal }
@@ -498,33 +515,49 @@ export async function buildDecisionGraph(repoData) {
 }
 
 /**
- * Multi-hop GraphRAG Search Engine with Evidence Ranking & Relationship Traversal.
+ * Repository-Isolated Multi-hop GraphRAG Search Engine.
+ * Strictly scopes all Cypher queries to the target repository (or active repository).
  * 
  * @param {string} question - Natural language developer question
+ * @param {string} [repository] - Target repository (e.g. "sriyukthach/SmartBundle-AI")
  * @returns {Promise<{ evidence: Array<Object>, structuredContext: Object }>}
  */
-export async function querySubgraph(question) {
+export async function querySubgraph(question, repository = null) {
   if (!question || typeof question !== 'string') {
     return { evidence: [], structuredContext: {} };
   }
-
-  const words = question
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from', 'does', 'have', 'been'].includes(w));
-
-  const keyword = words[0] || question.trim();
-  console.log(`[Neo4j Service] Multi-hop GraphRAG query for keyword: "${keyword}"...`);
 
   const d = getDriver();
   const session = d.session();
 
   try {
+    // Determine active target repository ID
+    let repoId = repository ? repository.trim() : null;
+    if (!repoId) {
+      const activeRepoRes = await session.executeRead((tx) =>
+        tx.run(`MATCH (r:Repository) RETURN r.id AS id ORDER BY r.ingestedAt DESC LIMIT 1`)
+      );
+      if (activeRepoRes.records.length > 0) {
+        repoId = safeValue(activeRepoRes.records[0].get('id'));
+      }
+    }
+
+    console.log(`[Neo4j Service] Repository-isolated GraphRAG query for repo: "${repoId || 'ALL'}" | Question: "${question}"...`);
+
+    const words = question
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !['why', 'what', 'how', 'when', 'where', 'was', 'were', 'the', 'this', 'that', 'with', 'from', 'does', 'have', 'been', 'developer', 'trying', 'solve', 'code', 'changed'].includes(w));
+
+    const keyword = words[0] || '';
+
+    // Repository-Scoped Cypher Traversal
     const cypher = `
-      // 1. Decisions matching keyword
-      MATCH (dec:Decision)
-      WHERE toLower(dec.text) CONTAINS toLower($keyword)
+      // 1. Decisions for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_COMMIT|HAS_PULL_REQUEST*1..2]->(parent)
+      MATCH (parent)-[:SUPPORTS|IMPLEMENTS|MADE_IN*1..2]-(dec:Decision)
+      WHERE ($keyword = '' OR toLower(dec.text) CONTAINS toLower($keyword))
       OPTIONAL MATCH (dec)-[:MADE_IN]->(pr:PullRequest)
       OPTIONAL MATCH (dec)-[:IMPLEMENTED_BY]->(c:Commit)
       RETURN 'decision' AS type,
@@ -538,9 +571,10 @@ export async function querySubgraph(question) {
 
       UNION
 
-      // 2. Incidents matching keyword
-      MATCH (inc:Incident)
-      WHERE toLower(inc.text) CONTAINS toLower($keyword)
+      // 2. Incidents for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_ISSUE|HAS_COMMIT|HAS_PULL_REQUEST*1..2]->(parent)
+      MATCH (parent)-[:DESCRIBES|ADDRESSES|ADDRESSED_BY*1..2]-(inc:Incident)
+      WHERE ($keyword = '' OR toLower(inc.text) CONTAINS toLower($keyword))
       OPTIONAL MATCH (i:Issue)-[:DESCRIBES]->(inc)
       OPTIONAL MATCH (inc)-[:ADDRESSED_BY]->(c:Commit)
       RETURN 'incident' AS type,
@@ -554,14 +588,9 @@ export async function querySubgraph(question) {
 
       UNION
 
-      // 3. Pull Requests matching keyword or connected file
-      MATCH (pr:PullRequest)
-      WHERE toLower(pr.title) CONTAINS toLower($keyword)
-         OR toLower(pr.body) CONTAINS toLower($keyword)
-         OR EXISTS {
-           MATCH (pr)-[:DISCUSSES]->(f:File)
-           WHERE toLower(f.filename) CONTAINS toLower($keyword)
-         }
+      // 3. Pull Requests for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_PULL_REQUEST]->(pr:PullRequest)
+      WHERE ($keyword = '' OR toLower(pr.title) CONTAINS toLower($keyword) OR toLower(pr.body) CONTAINS toLower($keyword))
       OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(pr)
       RETURN 'pull_request' AS type,
              pr.id AS id,
@@ -574,10 +603,9 @@ export async function querySubgraph(question) {
 
       UNION
 
-      // 4. Issues matching keyword
-      MATCH (i:Issue)
-      WHERE toLower(i.title) CONTAINS toLower($keyword)
-         OR toLower(i.body) CONTAINS toLower($keyword)
+      // 4. Issues for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_ISSUE]->(i:Issue)
+      WHERE ($keyword = '' OR toLower(i.title) CONTAINS toLower($keyword) OR toLower(i.body) CONTAINS toLower($keyword))
       OPTIONAL MATCH (dev:Developer)-[:CREATED]->(i)
       RETURN 'issue' AS type,
              i.id AS id,
@@ -590,13 +618,9 @@ export async function querySubgraph(question) {
 
       UNION
 
-      // 5. Commits matching keyword or modified file
-      MATCH (c:Commit)
-      WHERE toLower(c.message) CONTAINS toLower($keyword)
-         OR EXISTS {
-           MATCH (c)-[:MODIFIES]->(f:File)
-           WHERE toLower(f.filename) CONTAINS toLower($keyword)
-         }
+      // 5. Commits for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_COMMIT]->(c:Commit)
+      WHERE ($keyword = '' OR toLower(c.message) CONTAINS toLower($keyword))
       OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
       RETURN 'commit' AS type,
              c.sha AS id,
@@ -609,10 +633,9 @@ export async function querySubgraph(question) {
 
       UNION
 
-      // 6. Discussions matching keyword
-      MATCH (d:Discussion)
-      WHERE toLower(d.body) CONTAINS toLower($keyword)
-      OPTIONAL MATCH (pr:PullRequest)-[:HAS_DISCUSSION]->(d)
+      // 6. Discussions for repoId
+      MATCH (r:Repository { id: $repoId })-[:HAS_PULL_REQUEST]->(pr:PullRequest)-[:HAS_DISCUSSION]->(d:Discussion)
+      WHERE ($keyword = '' OR toLower(d.body) CONTAINS toLower($keyword))
       RETURN 'discussion' AS type,
              d.id AS id,
              ('Discussion by @' + d.user) AS title,
@@ -623,9 +646,9 @@ export async function querySubgraph(question) {
              6 AS rank
     `;
 
-    const result = await session.executeRead((tx) => tx.run(cypher, { keyword }));
+    const result = await session.executeRead((tx) => tx.run(cypher, { repoId, keyword }));
 
-    const rawEvidence = result.records.map((record) => ({
+    let rawEvidence = result.records.map((record) => ({
       type: safeValue(record.get('type'), 'evidence'),
       id: safeValue(record.get('id'), 'N/A'),
       title: safeValue(record.get('title'), 'Historical Evidence'),
@@ -636,6 +659,47 @@ export async function querySubgraph(question) {
       rank: Number(safeValue(record.get('rank'), 99)) || 99,
     }));
 
+    // If keyword search yielded 0 items, run fallback repository-scoped query to get repo's commits, PRs, issues
+    if (rawEvidence.length === 0 && repoId) {
+      console.log(`[Neo4j Service] No keyword match for "${keyword}". Executing fallback query for repo "${repoId}"...`);
+      const fallbackCypher = `
+        MATCH (r:Repository { id: $repoId })-[:HAS_COMMIT]->(c:Commit)
+        OPTIONAL MATCH (dev:Developer)-[:AUTHORED]->(c)
+        RETURN 'commit' AS type,
+               c.sha AS id,
+               ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS title,
+               dev.username AS author,
+               c.date AS date,
+               c.url AS url,
+               ('Commit ' + substring(c.sha, 0, 7) + ': ' + c.message) AS reason,
+               5 AS rank
+        LIMIT 10
+      `;
+      const fallbackRes = await session.executeRead((tx) => tx.run(fallbackCypher, { repoId }));
+      rawEvidence = fallbackRes.records.map((record) => ({
+        type: safeValue(record.get('type'), 'evidence'),
+        id: safeValue(record.get('id'), 'N/A'),
+        title: safeValue(record.get('title'), 'Historical Evidence'),
+        author: safeValue(record.get('author'), 'Unknown'),
+        date: safeValue(record.get('date'), 'N/A'),
+        url: safeValue(record.get('url'), '#'),
+        reason: safeValue(record.get('reason'), ''),
+        rank: Number(safeValue(record.get('rank'), 99)) || 99,
+      }));
+    }
+
+    // FAILSAFE GUARANTEE: Filter strictly to repoId
+    if (repoId) {
+      rawEvidence = rawEvidence.filter((item) => {
+        if (!item.url || item.url === '#') return true;
+        // If it's a GitHub URL, it MUST contain repoId (e.g. sriyukthach/SmartBundle-AI)
+        if (item.url.startsWith('http') && item.url.includes('github.com')) {
+          return item.url.toLowerCase().includes(repoId.toLowerCase());
+        }
+        return true;
+      });
+    }
+
     // Sort evidence by rank priority
     const evidence = rawEvidence.sort((a, b) => a.rank - b.rank);
 
@@ -643,6 +707,7 @@ export async function querySubgraph(question) {
     const structuredContext = {
       question,
       keyword,
+      repository: repoId,
       decisions: evidence.filter((e) => e.type === 'decision'),
       incidents: evidence.filter((e) => e.type === 'incident'),
       pullRequests: evidence.filter((e) => e.type === 'pull_request'),
@@ -651,7 +716,7 @@ export async function querySubgraph(question) {
       discussions: evidence.filter((e) => e.type === 'discussion'),
     };
 
-    console.log(`[Neo4j Service] Multi-hop search returned ${evidence.length} evidence records.`);
+    console.log(`[Neo4j Service] Repository-isolated GraphRAG search for "${repoId}" returned ${evidence.length} evidence records.`);
     return { evidence, structuredContext };
   } catch (err) {
     console.error(`[Neo4j Service] GraphRAG query error:`, err.message);

@@ -101,7 +101,10 @@ export default function App() {
     setEvidenceFilter('all');
 
     try {
-      const res = await axios.post('/api/query', { question: question.trim() });
+      const res = await axios.post('/api/query', {
+        question: question.trim(),
+        repository: repository.trim()
+      });
       setQueryResult(res.data);
     } catch (err) {
       console.error('Query execution error:', err);
@@ -121,7 +124,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#070b16] text-[#e8edf7] font-sans selection:bg-[#00afc4]/30 selection:text-[#ffffff]">
+    <div className="min-h-screen bg-[#08090d] text-[#f8fafc] font-sans selection:bg-[#8b5cf6]/30 selection:text-white">
       
       {/* HEADER */}
       <Header
@@ -132,10 +135,10 @@ export default function App() {
         onReset={queryResult ? handleReset : null}
       />
 
-      {/* CENTERED APPLICATION WORKSPACE (MAX-WIDTH: 1180PX) */}
-      <main className="max-w-[1180px] mx-auto px-4 md:px-6 py-6 space-y-5">
+      {/* DESKTOP-FIRST WORKSPACE CONTAINER (MAX-WIDTH: 1360PX) */}
+      <main className="max-w-[1360px] mx-auto px-6 sm:px-10 py-10 space-y-12">
         
-        {/* PANEL 1: REPOSITORY INGESTION CONTROL */}
+        {/* REPOSITORY INGESTION INTERACTION */}
         <RepositoryInput
           repository={repository}
           setRepository={setRepository}
@@ -146,7 +149,7 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* ACTIVE REPOSITORY CONTEXT BAR */}
+        {/* ACTIVE REPOSITORY CONTEXT BANNER */}
         {ingestSuccess && (
           <WorkspaceHeader
             repository={ingestSuccess.repository || repository}
@@ -154,7 +157,7 @@ export default function App() {
           />
         )}
 
-        {/* PANEL 2: ASK WHY QUESTION CONTROL */}
+        {/* ASK WHY QUERY COMMAND INTERFACE */}
         <QuestionPanel
           question={question}
           setQuestion={setQuestion}
@@ -164,11 +167,11 @@ export default function App() {
           backendUnavailable={backendUnavailable}
         />
 
-        {/* QUERY RESULT CANVAS OR HERO STARTING STATE */}
+        {/* QUERY RESULT CANVAS OR HERO STARTING WORKFLOW */}
         {queryResult ? (
-          <div className="space-y-5">
+          <div className="space-y-12 pt-6 border-t border-[#1f2430]">
             
-            {/* GRAPH REASONING TRAIL */}
+            {/* HORIZONTAL GRAPH REASONING TRAIL */}
             <DecisionChain
               question={question}
               evidence={queryResult.evidence}
@@ -176,11 +179,11 @@ export default function App() {
               onSelectType={(type) => setEvidenceFilter(type)}
             />
 
-            {/* TWO-COLUMN RESULTS: CANVAS & EVIDENCE */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+            {/* TWO-COLUMN RESULTS CANVAS: MAIN ANSWER (LEFT) & EVIDENCE (RIGHT) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
               
-              {/* MAIN WHY ANSWER CANVAS (7 COLS) */}
-              <div className="lg:col-span-7 space-y-5">
+              {/* MAIN WHY ANSWER CANVAS (7 COLS ON DESKTOP) */}
+              <div className="lg:col-span-7 space-y-12">
                 <AnswerPanel queryResult={queryResult} />
 
                 <WhyThisAnswer
@@ -189,8 +192,8 @@ export default function App() {
                 />
               </div>
 
-              {/* EVIDENCE & TIMELINE (5 COLS) */}
-              <div className="lg:col-span-5 space-y-5">
+              {/* RETRIEVED EVIDENCE & TIMELINE (5 COLS ON DESKTOP) */}
+              <div className="lg:col-span-5 space-y-12">
                 <EvidencePanel
                   evidence={queryResult.evidence}
                   activeFilter={evidenceFilter}
@@ -204,7 +207,7 @@ export default function App() {
 
           </div>
         ) : (
-          /* PANEL 3: HERO STARTING WORKSPACE */
+          /* HERO STARTING WORKFLOW */
           <EmptyState onSelectPreset={(preset) => {
             setRepository(preset);
           }} />
@@ -213,8 +216,8 @@ export default function App() {
       </main>
 
       {/* FOOTER */}
-      <footer className="border-t border-[#1a2940] py-5 text-center text-[11px] text-[#56647a] font-mono">
-        WHY THE CODE IS LIKE THIS :: NEO4J GRAPHRAG & SARVAM AI
+      <footer className="border-t border-[#1f2430] py-10 text-center text-xs text-[#6b7280] font-mono">
+        Why The Code Is Like This :: Neo4j GraphRAG & Sarvam AI Engine
       </footer>
 
     </div>

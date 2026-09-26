@@ -87,11 +87,11 @@ router.post('/ingest', async (req, res) => {
 
 /**
  * POST /api/query
- * Executes Multi-hop GraphRAG query: fetches evidence from Neo4j and synthesizes explanation via Sarvam AI.
- * Input body: { question: string }
+ * Executes Multi-hop GraphRAG query: fetches repository-scoped evidence from Neo4j and synthesizes explanation via Sarvam AI.
+ * Input body: { question: string, repository?: string }
  */
 router.post('/query', async (req, res) => {
-  const { question } = req.body;
+  const { question, repository } = req.body;
 
   if (!question || typeof question !== 'string' || !question.trim()) {
     return res.status(400).json({
@@ -102,12 +102,12 @@ router.post('/query', async (req, res) => {
   }
 
   try {
-    console.log(`[API Route] Processing Phase 3 GraphRAG query: "${question}"`);
+    console.log(`[API Route] Processing Phase 3 GraphRAG query for repo "${repository || 'AUTO'}": "${question}"`);
 
-    // Step 1: Multi-hop graph retrieval from Neo4j
-    const { evidence, structuredContext } = await querySubgraph(question);
+    // Step 1: Multi-hop graph retrieval from Neo4j strictly scoped to target repository
+    const { evidence, structuredContext } = await querySubgraph(question, repository);
 
-    // Step 2: Generate Sarvam AI explanation structured into WHY, EVIDENCE, HISTORY, PEOPLE
+    // Step 2: Generate Sarvam AI explanation structured into 7 sections
     const { answer, confidence } = await generateAnswerWithEvidence(question, evidence, structuredContext);
 
     return res.json({

@@ -6,13 +6,13 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
   if (!evidence) return null;
 
   const filterTypes = [
-    { key: 'all', label: 'All', count: evidence.length },
-    { key: 'decision', label: 'Decisions', count: evidence.filter(e => e.type === 'decision').length },
-    { key: 'incident', label: 'Incidents', count: evidence.filter(e => e.type === 'incident').length },
-    { key: 'pull_request', label: 'PRs', count: evidence.filter(e => e.type === 'pull_request').length },
-    { key: 'commit', label: 'Commits', count: evidence.filter(e => e.type === 'commit').length },
-    { key: 'discussion', label: 'Discussions', count: evidence.filter(e => e.type === 'discussion').length },
-    { key: 'issue', label: 'Issues', count: evidence.filter(e => e.type === 'issue').length }
+    { key: 'all', label: 'ALL', count: evidence.length },
+    { key: 'decision', label: 'DECISIONS', count: evidence.filter(e => e.type === 'decision').length },
+    { key: 'incident', label: 'INCIDENTS', count: evidence.filter(e => e.type === 'incident').length },
+    { key: 'pull_request', label: 'PULL REQUESTS', count: evidence.filter(e => e.type === 'pull_request').length },
+    { key: 'commit', label: 'COMMITS', count: evidence.filter(e => e.type === 'commit').length },
+    { key: 'discussion', label: 'DISCUSSIONS', count: evidence.filter(e => e.type === 'discussion').length },
+    { key: 'issue', label: 'ISSUES', count: evidence.filter(e => e.type === 'issue').length }
   ];
 
   const filteredEvidence = activeFilter === 'all'
@@ -22,30 +22,30 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
     : evidence.filter(item => item.type === activeFilter);
 
   return (
-    <div className="bg-[#0b1120] border border-[#1a2940] rounded-xs p-5 space-y-3">
+    <div className="py-6 space-y-6">
       
-      {/* HEADER & FILTER TABS */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1a2940] pb-2.5">
+      {/* HEADER & UNDERSTATED FILTER CONTROLS */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#1f2430] pb-4">
         <div>
-          <h3 className="text-xs font-bold text-[#e8edf7] font-mono tracking-wider uppercase">
-            RETRIEVED EVIDENCE
+          <h3 className="text-xl font-extrabold text-[#f8fafc] tracking-tight">
+            Source Material Evidence
           </h3>
-          <p className="text-[11px] text-[#7f8ca3] font-sans">
-            Neo4j graph records.
+          <p className="text-xs text-[#9ca3af] font-sans mt-0.5">
+            Historical repository evidence retrieved directly from Neo4j graph traversal.
           </p>
         </div>
 
-        {/* COMPACT FILTER TABS */}
-        <div className="flex items-center gap-1 overflow-x-auto font-mono text-[11px]">
+        {/* UNDERSTATED CONTROLS */}
+        <div className="flex items-center gap-2 overflow-x-auto font-mono text-xs">
           {filterTypes.map(ft => (
             ft.count > 0 || ft.key === 'all' ? (
               <button
                 key={ft.key}
                 onClick={() => setActiveFilter && setActiveFilter(ft.key)}
-                className={`px-2 py-0.5 rounded-xs border transition-colors duration-150 whitespace-nowrap cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg border transition-all duration-200 whitespace-nowrap cursor-pointer ${
                   activeFilter === ft.key
-                    ? 'bg-[#00afc4]/15 text-[#00afc4] border-[#00afc4] font-semibold'
-                    : 'bg-[#080d18] text-[#56647a] border-[#1a2940] hover:text-[#e8edf7]'
+                    ? 'bg-[#06b6d4]/15 text-[#06b6d4] border-[#06b6d4] font-bold'
+                    : 'bg-transparent text-[#9ca3af] border-transparent hover:text-[#f8fafc]'
                 }`}
               >
                 {ft.label} ({ft.count})
@@ -55,13 +55,13 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
         </div>
       </div>
 
-      {/* COMPACT EVIDENCE ROWS */}
+      {/* VERTICAL RESEARCH FEED */}
       {filteredEvidence.length === 0 ? (
-        <div className="py-6 text-center text-[#56647a] text-xs font-mono bg-[#080d18] border border-[#1a2940] rounded-xs">
+        <div className="py-8 text-center text-[#9ca3af] text-xs font-mono bg-[#0d0e14] border border-[#1f2430] rounded-xl">
           No records match filter '{activeFilter}'.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y divide-[#1f2430]">
           {filteredEvidence.map((item, idx) => {
             const hasUrl = item.url && item.url !== '#' && item.url.startsWith('http');
             const isSelected = selectedEvidenceId === idx;
@@ -75,19 +75,19 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
                     setActiveFilter(item.type);
                   }
                 }}
-                className={`p-3 rounded-xs border transition-all duration-150 cursor-pointer ${
+                className={`py-5 space-y-2.5 transition-all duration-200 cursor-pointer px-4 rounded-xl ${
                   isSelected
-                    ? 'bg-[#00afc4]/10 border-[#00afc4] text-[#e8edf7]'
-                    : 'bg-[#0e1627] border-[#1a2940] text-[#7f8ca3] hover:border-[#263b59] hover:text-[#e8edf7]'
+                    ? 'bg-[#12141d] border border-[#8b5cf6] shadow-md'
+                    : 'hover:bg-[#12141d]/70 hover:-translate-y-0.5'
                 }`}
               >
                 {/* LINE 1: TYPE, TITLE, SOURCE LINK */}
-                <div className="flex items-start justify-between gap-2 font-sans text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[#00afc4] bg-[#00afc4]/10 px-1.5 py-0.2 border border-[#00afc4]/30 rounded-xs">
+                <div className="flex items-start justify-between gap-4 font-sans text-sm">
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-[#06b6d4] bg-[#06b6d4]/10 px-2.5 py-0.5 border border-[#06b6d4]/30 rounded-md">
                       {item.type}
                     </span>
-                    <span className="font-semibold text-[#e8edf7]">
+                    <span className="font-bold text-[#f8fafc] text-base">
                       {item.title}
                     </span>
                   </div>
@@ -98,22 +98,23 @@ export default function EvidencePanel({ evidence = [], activeFilter = 'all', set
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
-                      className="font-mono text-[10px] text-[#00afc4] hover:underline whitespace-nowrap font-semibold"
+                      className="font-mono text-xs text-[#06b6d4] hover:underline whitespace-nowrap font-bold flex items-center gap-1"
                     >
-                      VIEW ON GITHUB →
+                      <span>VIEW SOURCE</span>
+                      <span>→</span>
                     </a>
                   )}
                 </div>
 
                 {/* LINE 2: REASON EXCERPT */}
                 {item.reason && (
-                  <p className="text-[11px] text-[#7f8ca3] italic font-sans pl-2 border-l border-[#00afc4] my-1.5 leading-relaxed">
+                  <p className="text-sm text-[#e2e8f0] italic font-sans pl-3 border-l-2 border-[#8b5cf6] my-2 leading-relaxed">
                     "{item.reason}"
                   </p>
                 )}
 
                 {/* LINE 3: METADATA PROVENANCE */}
-                <div className="text-[10px] font-mono text-[#56647a] flex items-center justify-between pt-1">
+                <div className="text-xs font-mono text-[#6b7280] flex items-center justify-between pt-1">
                   <span>@{item.author || 'contributor'}</span>
                   <span>{item.date || 'Historical Event'}</span>
                 </div>

@@ -10,58 +10,55 @@ export default function HistoryTimeline({ evidence = [] }) {
   if (timelineItems.length === 0) return null;
 
   return (
-    <div className="bg-[#0b1120] border border-[#1a2940] rounded-xs p-5 space-y-3">
+    <div className="py-6 space-y-6">
       
       {/* HEADER */}
       <div>
-        <h3 className="text-xs font-bold text-[#e8edf7] font-mono uppercase tracking-wider">
-          CHRONOLOGICAL DECISION RAIL
+        <h3 className="text-xl font-extrabold text-[#f8fafc] tracking-tight font-sans">
+          Chronological Decision Rail
         </h3>
-        <p className="text-[11px] text-[#7f8ca3] font-sans mt-0.5">
-          Sequence of events establishing current code state.
+        <p className="text-xs text-[#9ca3af] font-sans mt-0.5">
+          Sequence of historical events establishing current codebase state.
         </p>
       </div>
 
       {/* CHRONOLOGICAL RAIL */}
-      <div className="relative pl-3.5 space-y-2.5 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#1a2940]">
+      <div className="relative pl-4 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#1f2430]">
         {timelineItems.map((item, idx) => {
           const hasUrl = item.url && item.url !== '#' && item.url.startsWith('http');
 
           return (
-            <div key={idx} className="relative">
+            <div key={idx} className="relative group pl-3 space-y-1">
               {/* NODE DOT */}
-              <div className="absolute -left-[17px] top-2.5 w-2 h-2 rounded-full bg-[#00afc4] border border-[#0b1120]" />
+              <div className="absolute -left-[17px] top-2.5 w-2.5 h-2.5 rounded-full bg-[#06b6d4]" />
 
-              {/* ROW */}
-              <div className="p-2.5 bg-[#0e1627] border border-[#1a2940] rounded-xs space-y-1 transition-colors duration-150 hover:border-[#263b59]">
-                <div className="flex items-center justify-between font-mono text-[10px]">
-                  <span className="text-[#00afc4] font-bold uppercase">{item.type}</span>
-                  <span className="text-[#56647a]">{item.date || 'Historical Event'}</span>
-                </div>
+              <div className="flex items-center justify-between font-mono text-xs text-[#6b7280]">
+                <span className="text-[#06b6d4] font-bold uppercase">{item.type}</span>
+                <span>{item.date || 'Historical Event'}</span>
+              </div>
 
-                <h4 className="font-semibold text-[#e8edf7] text-xs font-sans">
-                  {item.title}
-                </h4>
+              <h4 className="font-bold text-[#f8fafc] text-base font-sans">
+                {item.title}
+              </h4>
 
-                {item.reason && (
-                  <p className="text-[11px] text-[#7f8ca3] font-sans italic">
-                    "{item.reason}"
-                  </p>
+              {item.reason && (
+                <p className="text-sm text-[#9ca3af] font-sans italic leading-relaxed">
+                  "{item.reason}"
+                </p>
+              )}
+
+              <div className="flex items-center justify-between text-xs font-mono text-[#6b7280] pt-1">
+                <span>@{item.author || 'contributor'}</span>
+                {hasUrl && (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[#06b6d4] hover:underline font-bold"
+                  >
+                    VIEW SOURCE →
+                  </a>
                 )}
-
-                <div className="flex items-center justify-between text-[10px] font-mono text-[#56647a] pt-0.5">
-                  <span>@{item.author || 'contributor'}</span>
-                  {hasUrl && (
-                    <a
-                      href={item.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[#00afc4] hover:underline"
-                    >
-                      GITHUB →
-                    </a>
-                  )}
-                </div>
               </div>
             </div>
           );
